@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Shot Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&family=JetBrains+Mono:wght@500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231a1e22'/%3E%3Ccircle cx='12' cy='16' r='5' fill='%23cf4a0c'/%3E%3Cpath d='M19 9l8 7-8 7z' fill='%236d99ff'/%3E%3C/svg%3E">
+</head>
+<body>
+<div class="gate" id="gate" hidden>
+  <div class="gate-card">
+    <h1>Shot Planner</h1>
+    <p id="gate-msg">This link is missing its key. Open the full link you were sent (it ends with a # and a long code).</p>
+  </div>
+</div>
+
+<div class="app" id="app" hidden>
+  <header class="top">
+    <div class="ident">
+      <div class="eyebrow" id="eyebrow"></div>
+      <h1 id="title">Shot Planner</h1>
+      <div class="stamp" id="stamp"></div>
+      <div class="vline" id="vline"></div>
+    </div>
+    <div class="readout" aria-live="off">
+      <div class="clock timer idle" id="timerbox"><span class="lbl">On-camera timer</span><span id="timer" class="digits">15:00</span></div>
+      <div class="clock small"><span class="lbl">Take time</span><span id="taketime" class="digits">0:00</span></div>
+      <div class="beatnow"><span class="lbl" id="beatcode">Beat</span><span id="beatname">Before action</span></div>
+    </div>
+  </header>
+
+  <div class="bar">
+    <button class="btn edit-toggle" id="edit" aria-pressed="false" title="Turn editing on or off (E)"><span class="dot-ed"></span><span id="edit-lbl">Edit</span></button>
+    <button class="btn" id="undo" title="Undo your last change (Ctrl+Z)" disabled>Undo</button>
+    <button class="btn ghost" id="me" title="The name on your changes">You: <b id="me-name">—</b></button>
+    <span class="sync" id="sync" role="status">Connecting…</span>
+    <span class="spacer"></span>
+    <span class="here" id="here" aria-label="Who else has the plan open"></span>
+    <button class="btn ghost" id="print" title="Print cards, the run sheet and more">Print</button>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button role="tab" id="tab-take" aria-selected="true" data-view="take">Take</button>
+    <button role="tab" id="tab-cards" aria-selected="false" data-view="cards">Cards</button>
+    <button role="tab" id="tab-resets" aria-selected="false" data-view="resets">Resets</button>
+    <button role="tab" id="tab-plan" aria-selected="false" data-view="plan">Plan tables</button>
+    <button role="tab" id="tab-checks" aria-selected="false" data-view="checks">Checks <span class="count" id="warncount" hidden></span></button>
+    <button role="tab" id="tab-history" aria-selected="false" data-view="history">History</button>
+    <button role="tab" id="tab-about" aria-selected="false" data-view="about">About</button>
+  </nav>
+
+  <div class="edit-hint" id="edit-hint" hidden>
+    <b>Editing.</b> Drag a person to put them there at the playhead's time (a new keyframe, or the one already there). Drag the diamonds under the timeline to retime them; tap one to edit it. <label class="mk-toggle"><input type="checkbox" id="move-marks"> Move marks and things on counters</label>
+  </div>
+
+  <main class="grid" id="main-grid">
+    <section class="mapcol" aria-label="Floor plan">
+      <div class="maptools">
+        <span>View</span>
+        <span class="seg" role="group" aria-label="Map view">
+          <button id="v-auto" aria-pressed="true">Auto</button><button id="v-kitchen" aria-pressed="false">Kitchen</button><button id="v-route" aria-pressed="false">Whole route</button>
+        </span>
+        <span>Lens (a guess)</span>
+        <span class="seg" role="group" aria-label="Lens" id="lenses"></span>
+      </div>
+      <div class="mapwrap"><svg id="map" role="img" aria-label="Floor plan with everyone's positions at the selected moment"></svg></div>
+      <div class="timeline" id="timeline">
+        <div class="ctrls">
+          <button class="btn" id="prev" title="Previous beat ( [ )">◀ Beat</button>
+          <button class="btn primary" id="play" title="Play or pause (space)">Play</button>
+          <button class="btn" id="next" title="Next beat ( ] )">Beat ▶</button>
+          <button class="btn small-btn" id="back1" title="Back half a second ( , )">−½s</button>
+          <button class="btn small-btn" id="fwd1" title="Forward half a second ( . )">+½s</button>
+          <span class="spacer"></span>
+          <span class="small">Speed</span>
+          <span class="seg" role="group" aria-label="Playback speed">
+            <button data-speed="1" aria-pressed="false">1×</button><button data-speed="4" aria-pressed="false">4×</button><button data-speed="10" aria-pressed="true">10×</button><button data-speed="30" aria-pressed="false">30×</button>
+          </span>
+        </div>
+        <input type="range" id="scrub" min="-10" max="975" step="0.5" value="-10" aria-label="Take time">
+        <div class="strip" id="strip"></div>
+        <div class="lanes" id="lanes" aria-label="Everyone's keyframes"></div>
+        <div class="swaps-strip" id="swapstrip" aria-label="Swap windows at this lens"></div>
+        <div class="legend-row">
+          <span><i class="dot" style="background:var(--talent)"></i><span id="lg-talent">Talent</span></span>
+          <span><i class="dot" style="background:var(--camera)"></i>Camera</span>
+          <span><i class="dot" style="background:var(--crew)"></i>Crew</span>
+          <span><i class="dot" style="background:var(--boom)"></i>Boom</span>
+          <span><i class="dot" style="background:var(--wedge);border:1.5px solid var(--camera)"></i>Camera's view</span>
+          <span><i class="dot" style="background:var(--hot)"></i>Hot zone</span>
+          <span><i class="dot" style="background:var(--swap);border:1.5px solid var(--crew2)"></i>Swap window</span>
+          <span><i class="use-key"></i>When the swap would help</span>
+          <span><i class="kf-key"></i>Keyframe</span>
+          <span><i class="ring-key"></i>Mark a source states</span>
+          <span><i class="ring-key dashed"></i>Draft, or unknown</span>
+        </div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <div id="view-take">
+        <div class="card" id="inspector" hidden></div>
+        <div class="card">
+          <h2>Right now</h2>
+          <div class="status" id="inview"></div>
+          <p class="small" id="notchecked"></p>
+          <h3>Doing</h3>
+          <div class="now-line" id="doing"></div>
+          <h3>Everyone</h3>
+          <div class="plist" id="plist"></div>
+          <p class="small">Tap a name or a dot for that person's card.</p>
+        </div>
+        <div class="card">
+          <h2>Swaps at this lens</h2>
+          <div class="tablewrap"><table id="swaptable"></table></div>
+          <p class="small">Useful: when the swap would help. A window: a stretch inside that, long enough for the walk in, the swap and the walk out, when the thing being swapped and the swapper's whole body (at the hold, on the way in and at the spot; a body counts as 0.5 m wide) are more than 3° outside the frame, and the talent is more than 0.9 m from the swapper's spot. The sketch doesn't see an arm reaching in. Windows are worked out again after every change.</p>
+        </div>
+      </div>
+      <div id="view-cards" hidden>
+        <div class="card">
+          <div class="chips" id="cardchips" role="group" aria-label="Choose a card"></div>
+          <div id="cardbody"></div>
+        </div>
+      </div>
+      <div id="view-resets" hidden>
+        <div class="card">
+          <h2>Resets</h2>
+          <div class="chips" role="group" aria-label="Reset type">
+            <button id="r-partial" aria-pressed="true">Partial</button>
+            <button id="r-full" aria-pressed="false">Full</button>
+          </div>
+          <p class="small" id="resetnote"></p>
+          <div class="tablewrap"><table id="resettable"></table></div>
+        </div>
+        <div class="card">
+          <h2>Attempts left</h2>
+          <div class="calc">
+            <label for="c-now">Time of the cut<input type="time" id="c-now" value="13:30"></label>
+            <label for="c-stop">Stop by<input type="time" id="c-stop" value="15:00"></label>
+            <label for="c-reset">Reset (minutes)<input type="number" id="c-reset" min="2" max="40" step="1" value="10"></label>
+            <div><div class="big" id="c-out">3</div><div class="small">attempts left</div></div>
+          </div>
+          <p class="small" id="c-explain"></p>
+          <div class="tablewrap"><table class="lt" id="lighttable"></table></div>
+        </div>
+      </div>
+      <div id="view-about" hidden>
+        <div class="card">
+          <h2>About this plan</h2>
+          <ul class="tight" id="aboutlist"></ul>
+          <h3>What the sketch model notices (check at the rehearsal)</h3>
+          <ul class="tight" id="inferences"></ul>
+          <h3>Open questions</h3>
+          <div class="tablewrap"><table id="openitems"></table></div>
+        </div>
+        <div class="card">
+          <h2>How to work on it together</h2>
+          <ul class="tight">
+            <li>Everyone with this link sees the same plan, and every change shows up for everyone within a second or two. Keep the link inside the channel.</li>
+            <li>Turn on <b>Edit</b>. On the map, drag a person to where they should be at the playhead's time: that makes a keyframe (or moves the one already there). Between keyframes people wait, then walk at their pace so they arrive on time.</li>
+            <li>Under the timeline, each person has a row of diamonds (their keyframes). Drag one to change its time; tap it to edit where, facing, what they do and what to watch for.</li>
+            <li><b>Plan tables</b> holds everything else: marks, beats, the run sheet, cards, swaps, resets, preset, signals, measurements, open questions and the room itself. Edit a cell and it saves when you leave it.</li>
+            <li><b>Checks</b> lists anything the plan can't read and what the sketch model flags (crowding, walking into counters, who's in frame). <b>History</b> shows who changed what; any change can be undone, and an hourly copy of the whole plan can be restored.</li>
+            <li>Offline on the day? Changes you make are kept and sync when the connection is back.</li>
+          </ul>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <section class="wide" id="view-plan" hidden>
+    <div class="card">
+      <div class="plan-head">
+        <div class="chips" id="secchips" role="group" aria-label="Choose a table"></div>
+        <input type="search" id="plan-filter" placeholder="Filter rows" aria-label="Filter rows">
+      </div>
+      <p class="small" id="sec-help"></p>
+      <div id="sec-warn"></div>
+      <div class="tablewrap ptable-wrap"><table class="ptable" id="ptable"></table></div>
+      <div class="row-actions"><button class="btn" id="add-row">Add a row</button><span class="small" id="sec-count"></span></div>
+    </div>
+  </section>
+
+  <section class="wide" id="view-checks" hidden>
+    <div class="card"><h2>Rows the plan can't read</h2><div id="warnlist"></div></div>
+    <div class="card"><h2>What the sketch model flags</h2><div id="modelchecks"></div></div>
+    <div class="card"><h2>Tokens</h2><p class="small">Text anywhere in the plan can carry these; they're filled in from the plan, and change when it does. {timer} works in a keyframe's 'Watch for' (the timer reading at that moment).</p><div class="tablewrap"><table id="tokentable"></table></div></div>
+  </section>
+
+  <section class="wide" id="view-history" hidden>
+    <div class="card"><h2>Changes</h2><p class="small">Newest first. Undo puts back what was there before that change (as a new change, so it can be undone too).</p><div id="histlist"></div></div>
+    <div class="card"><h2>Copies of the whole plan</h2><p class="small">Taken automatically before the first change of each hour, and before any restore or import.</p><div id="snaplist"></div>
+      <div class="row-actions"><button class="btn" id="export">Download a copy (JSON)</button><label class="btn" for="import-file">Load a copy…</label><input type="file" id="import-file" accept="application/json,.json" hidden><span class="small" id="import-msg"></span></div>
+    </div>
+  </section>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<div id="printroot" class="printroot"></div>
+
+<script src="firebase-config.js"></script>
+<script src="derive.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>
