@@ -77,6 +77,7 @@
           <button class="btn" id="next" title="Next beat ( ] )">Beat ▶</button>
           <button class="btn small-btn" id="back1" title="Back half a second ( , )">−½s</button>
           <button class="btn small-btn" id="fwd1" title="Forward half a second ( . )">+½s</button>
+          <span class="seg" role="group" aria-label="Timeline zoom"><button data-zoom="all" aria-pressed="true" title="Show the whole take">Whole take</button><button data-zoom="near" aria-pressed="false" title="Show two minutes around the playhead">2 min</button></span>
           <span class="spacer"></span>
           <span class="small">Speed</span>
           <span class="seg" role="group" aria-label="Playback speed">
@@ -166,7 +167,7 @@
             <li>Turn on <b>Edit</b>. On the map, drag a person to where they should be at the playhead's time: that makes a keyframe (or moves the one already there). Between keyframes people wait, then walk at their pace so they arrive on time.</li>
             <li>Under the timeline, each person has a row of diamonds (their keyframes). Drag one to change its time; tap it to edit where, facing, what they do and what to watch for.</li>
             <li><b>Plan tables</b> holds everything else: marks, beats, the run sheet, cards, swaps, resets, preset, signals, measurements, open questions and the room itself. Edit a cell and it saves when you leave it.</li>
-            <li><b>Checks</b> lists anything the plan can't read and what the sketch model flags (crowding, walking into counters, who's in frame). <b>History</b> shows who changed what; any change can be undone, and an hourly copy of the whole plan can be restored.</li>
+            <li><b>Checks</b> lists anything the plan can't read and what the sketch model flags (crowding, walking into counters, who's in frame). <b>History</b> shows who changed what and can undo a change. An hourly copy of the whole plan is kept too: restoring one first saves the plan as it was, so a restore can be put back.</li>
             <li>Offline on the day? Changes you make are kept and sync when the connection is back.</li>
           </ul>
         </div>
@@ -196,7 +197,7 @@
   <section class="wide" id="view-history" hidden>
     <div class="card"><h2>Changes</h2><p class="small">Newest first. Undo puts back what was there before that change (as a new change, so it can be undone too).</p><div id="histlist"></div></div>
     <div class="card"><h2>Copies of the whole plan</h2><p class="small">Taken automatically before the first change of each hour, and before any restore or import.</p><div id="snaplist"></div>
-      <div class="row-actions"><button class="btn" id="export">Download a copy (JSON)</button><label class="btn" for="import-file">Load a copy…</label><input type="file" id="import-file" accept="application/json,.json" hidden><span class="small" id="import-msg"></span></div>
+      <div class="row-actions"><button class="btn" id="export">Download a copy (JSON)</button><label class="btn" id="import-lbl" for="import-file">Load a copy…</label><input type="file" id="import-file" accept="application/json,.json" hidden><span class="small" id="import-msg"></span></div>
     </div>
   </section>
 </div>

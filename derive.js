@@ -168,7 +168,7 @@
     const NEAR_EDGE = sNum("nearEdge", 10), MAX_RANGE = sNum("maxRange", 30), SWAP_SPEED = sNum("swapSpeed", 0.7);
     const SWAP_MARGIN = sNum("swapMargin", 3), BODY_HALF = sNum("bodyHalf", 0.25), TALENT_GAP = sNum("talentGap", 0.9);
     const CLEARANCE = sNum("clearance", 0.3), CROWD = sNum("crowdGap", 0.45), TIMER_LEN = sNum("timerLen", 900);
-    const TALENT = sStr("talent", "CY"), CAMERA = sStr("camera", "CAM");
+    const TALENT_SET = txt(set.talent), CAMERA_SET = txt(set.camera);
 
     // ---- marks, things on a counter, places off the plan
     const marks = [], draftMarks = [], off = [], props = [], find = {}, seen = {};
@@ -212,6 +212,8 @@
         marks: txt(r.marks), goesby: txt(r.goesby).toLowerCase(), named: txt(r.named) === "" ? true : yes(r.named), withcam: yes(r.withcam) });
     });
     const P = Object.fromEntries(people.map((p) => [p.code, p]));
+    const TALENT = TALENT_SET || ((people.find((p) => p.color === "talent") || {}).code || "");
+    const CAMERA = CAMERA_SET || ((people.find((p) => p.color === "camera") || {}).code || "");
     const NAMES = Object.fromEntries(people.map((p) => [p.code, p.who]));
     const OFF_PLAN = {};
     for (const p of people) {
@@ -237,13 +239,13 @@
       if (txt(r.pill)) pills[b] = txt(r.pill);
     });
     const BEAT_INDEX = Object.fromEntries(beatTimes.map((b) => [b[0], b]));
-    const timerBeat = sStr("timerBeat", "B3"), cutBeat = sStr("cutBeat", "B9"), endBeat = sStr("endBeat", "B12");
+    const timerBeat = txt(set.timerBeat), cutBeat = txt(set.cutBeat), endBeat = txt(set.endBeat);
     for (const need of [timerBeat, endBeat]) {
-      if (!BEAT_INDEX[need]) warn("Beats", null, `Beats: ${need} needs a start and an end (the timer and the end of the take come from it)`);
+      if (need && !BEAT_INDEX[need]) warn("Beats", null, `Beats: ${need} needs a start and an end (the timer and the end of the take come from it)`);
     }
     const TIMER_START = BEAT_INDEX[timerBeat] ? BEAT_INDEX[timerBeat][1] : 0;
-    const CUT_POINT = BEAT_INDEX[cutBeat] ? BEAT_INDEX[cutBeat][1] : 625;
     const TAKE_END = BEAT_INDEX[endBeat] ? BEAT_INDEX[endBeat][2] : Math.max(60, ...beatTimes.map((b) => b[2]));
+    const CUT_POINT = BEAT_INDEX[cutBeat] ? BEAT_INDEX[cutBeat][1] : TAKE_END;
     const INSIDE = beatTimes.filter((b) => insideSet.has(b[0])).map((b) => b[0]);
     const timerFull = () => { const r = pyRound(TIMER_LEN, 0); return Math.floor(r / 60) + ":" + pad2(r % 60); };
     function timerAt(T) {
@@ -606,32 +608,56 @@
       const w = (WINDOWS[code] || {})[lens] || [];
       return (w.map(([a, b]) => `${mmss(a)}-${mmss(b)}`).join(", ") || "none") + ` at ${lens}`;
     };
+    // {tokens}: each one is defined in the plan's settings ("tokens"), one per line: name = kind arguments
+    //   take REF [+/-s]     take time of REF (cut, timer, timerend, end, or a beat code = its start)
+    //   timer REF [+/-s]    the on-camera timer at REF
+    //   length BEAT         the beat's length in seconds
+    //   range A B T0-T1     closest and farthest two people get over that span ("talent", "camera" or a code)
+    //   closest A B T0-T1   closest they get
+    //   dist P Q            distance between two marks or things
+    //   first THING LENS    first moment a thing on a counter is in frame at that lens
     const NUM = (function () {
       const dist = (a, b) => hypot(a[0] - b[0], a[1] - b[1]);
       const out = {};
       const f1 = (v) => `${fmt(v, 1)} m`;
-      const span = (key, d) => { const [a, b] = parseSpan(set[key], d); const o = []; for (let T = a; T <= b + 1e-9; T += 0.5) o.push(T); return o; };
-      const hook = cam.length && tal.length ? span("hookFar", [0, 25.5]).map((T) => dist(posAt(cam, T), posAt(tal, T))) : [];
-      const passing = cam.length && tal.length ? span("hookPass", [29, 37.5]).map((T) => dist(posAt(cam, T), posAt(tal, T))) : [];
-      const k = {};
-      for (const m of ["A4", "A5", "A6", "K2", "K3", "K4"]) if (MARK_XY[m]) k[m] = MARK_XY[m];
-      const lift = BEAT_INDEX.B4 ? BEAT_INDEX.B4[1] : 485;
-      const strain = BEAT_INDEX[endBeat] ? BEAT_INDEX[endBeat][1] + 8 : 868;
-      const blender = PROP_XY.blender;
-      const vfirst = blender ? firstInFrame(blender, LENSES["24 mm"] !== undefined ? LENSES["24 mm"] : LENSES[LENS]) : null;
-      out.cut_take = mmss(CUT_POINT); out.cut_timer = timerAt(CUT_POINT);
-      out.restart_timer = timerAt(CUT_POINT - 25); out.timer_start_take = mmss(TIMER_START);
-      out.lift_take = mmss(lift); out.strain_take = mmss(strain); out.timer_end_take = mmss(TIMER_START + TIMER_LEN);
-      out.restart_ready_take = mmss(CUT_POINT - 60);
-      out.hook_s = BEAT_INDEX.B1 ? String(Math.trunc(pyRound(BEAT_INDEX.B1[2] - BEAT_INDEX.B1[1], 0))) : "?";
-      out.hook_far = hook.length ? `${fmt(Math.min(...hook), 1)} to ${fmt(Math.max(...hook), 1)} m` : "?";
-      out.hook_pass = passing.length ? f1(Math.min(...passing)) : "?";
-      out.fridge_dist = k.A4 && k.K2 ? f1(dist(k.A4, k.K2)) : "?";
-      out.a5_dist = k.A5 && k.K3 ? f1(dist(k.A5, k.K3)) : "?";
-      out.a6_talent = k.A6 && k.K4 ? f1(dist(k.A6, k.K4)) : "?";
-      out.a6_pot = k.A6 && PROP_XY.pot ? f1(dist(k.A6, PROP_XY.pot)) : "?";
-      out.blender_first = vfirst !== null ? mmss(vfirst) : "never";
-      out.disclosure_take = BEAT_INDEX.B8 ? mmss(BEAT_INDEX.B8[1]) : "?";
+      const refT = (ref) => {
+        if (ref === "cut") return CUT_POINT;
+        if (ref === "timer") return TIMER_START;
+        if (ref === "timerend") return TIMER_START + TIMER_LEN;
+        if (ref === "end") return TAKE_END;
+        if (BEAT_INDEX[ref]) return BEAT_INDEX[ref][1];
+        return null;
+      };
+      const who = (c) => TRACKS[c === "talent" ? TALENT : c === "camera" ? CAMERA : c] || [];
+      const xyOf = (c) => MARK_XY[c] || PROP_XY[c] || null;
+      const between = (a, b, sp) => {
+        const ta = who(a), tb = who(b), [s0, s1] = parseSpan(sp, [0, 0]), o = [];
+        if (!ta.length || !tb.length) return o;
+        for (let T = s0; T <= s1 + 1e-9; T += 0.5) o.push(dist(posAt(ta, T), posAt(tb, T)));
+        return o;
+      };
+      for (const line of txt(set.tokens).split("\n")) {
+        const m = /^\s*([a-z0-9_]+)\s*=\s*(\w+)\s*(.*?)\s*$/.exec(line);
+        if (!m) continue;
+        const [, name, kind, rest] = m, a = rest.split(/\s+/).filter(Boolean);
+        let v = "?";
+        if (kind === "take" || kind === "timer") {
+          const t = refT(a[0]), off = a[1] ? Number(a[1]) : 0;
+          if (t !== null && isFinite(off)) v = kind === "take" ? mmss(t + off) : timerAt(t + off);
+        } else if (kind === "length") {
+          if (BEAT_INDEX[a[0]]) v = String(Math.trunc(pyRound(BEAT_INDEX[a[0]][2] - BEAT_INDEX[a[0]][1], 0)));
+        } else if (kind === "range" || kind === "closest") {
+          const d = between(a[0], a[1], a[2]);
+          if (d.length) v = kind === "range" ? `${fmt(Math.min(...d), 1)} to ${fmt(Math.max(...d), 1)} m` : f1(Math.min(...d));
+        } else if (kind === "dist") {
+          const p = xyOf(a[0]), q = xyOf(a[1]);
+          if (p && q) v = f1(dist(p, q));
+        } else if (kind === "first") {
+          const p = PROP_XY[a[0]] || MARK_XY[a[0]], lens = a.slice(1).join(" ");
+          if (p) { const t = firstInFrame(p, LENSES[lens] !== undefined ? LENSES[lens] : LENSES[LENS]); v = t !== null ? mmss(t) : "never"; }
+        }
+        out[name] = v;
+      }
       for (const sw of SWAPS) {
         out[sw.code.toLowerCase() + "_win"] = winText(sw.code);
         out[sw.code.toLowerCase() + "_need"] = `${swapNeed(sw)} s`;
@@ -723,47 +749,48 @@
 
     // ---- inferences (wording from the plan's texts, numbers from the model)
     function inferences() {
+      // the notes are the plan's texts whose keys start with "inf", in order; three kinds are worked out from the model
       const out = [];
-      const L24 = LENSES["24 mm"] !== undefined ? LENSES["24 mm"] : LENSES[LENS];
-      const landing = parsePair(set.landing, null);
-      if (landing && tx.infLanding) {
-        const [a0, a1] = parseSpan(set.landingSpan, [25, 90]);
-        const rs = thingRuns(landing, L24, a0, a1, 0.0).filter((r) => r[1] - r[0] >= 2);
-        if (rs.length) out.push(["landing", fillTx("infLanding", { a: mmss(rs[0][0]), b: mmss(rs[0][1]) })]);
-      }
-      if (tx.infBlender) out.push(["blender", fillTx("infBlender")]);
-      for (const sw of SWAPS) {
-        const by = WINDOWS[sw.code] || {};
-        const t = Object.keys(by).map((lens) => `${lens} ` + (by[lens].map(([a, b]) => `${mmss(a)}-${mmss(b)}`).join(", ") || "none")).join("; ");
-        const anyWin = Object.values(by).some((v) => v.length);
-        const need = swapNeed(sw);
-        const ex = { name: sw.name, need: String(need), handling: String(sw.handling), txt: t };
-        if (!MARK_XY[sw.frm] && !sw.way_in.length) out.push([sw.code, fillTx("infSwapNoFrom", ex)]);
-        else if (anyWin) out.push([sw.code, fillTx("infSwapWin", ex)]);
-        else out.push([sw.code, fillTx("infSwapNone", ex)]);
-      }
-      if (PROP_XY.pot && tx.infPot && MARK_XY.K3 && MARK_XY.K4) {
-        const spans = [];
-        for (const lens of Object.keys(LENSES)) {
-          const r = thingRuns(PROP_XY.pot, LENSES[lens], TIMER_START, TAKE_END).filter((x) => x[1] - x[0] >= 60);
-          if (r.length) spans.push([lens, r[0][0], Math.max(...r.map((x) => x[1])), r]);
-        }
-        if (spans.length) {
-          const a = Math.max(...spans.map((s) => s[1])), b = Math.min(...spans.map((s) => s[2]));
+      const L = LENSES[LENS];
+      let swapsDone = false;
+      for (const key of rowsOf(plan, "texts").map((r) => r.id).filter((k) => /^inf/.test(k))) {
+        if (!tx[key]) continue;
+        if (key === "infSeeThrough") {
+          const pt = parsePair(set.seeThrough, null);
+          if (!pt) continue;
+          const [a0, a1] = parseSpan(set.seeThroughSpan, [0, TAKE_END]);
+          const rs = thingRuns(pt, L, a0, a1, 0.0).filter((r) => r[1] - r[0] >= 2);
+          if (rs.length) out.push([key, fillTx(key, { a: mmss(rs[0][0]), b: mmss(rs[0][1]) })]);
+        } else if (/^infSwap/.test(key)) {
+          if (swapsDone) continue;
+          swapsDone = true;
+          for (const sw of SWAPS) {
+            const by = WINDOWS[sw.code] || {};
+            const t = Object.keys(by).map((lens) => `${lens} ` + (by[lens].map(([a, b]) => `${mmss(a)}-${mmss(b)}`).join(", ") || "none")).join("; ");
+            const anyWin = Object.values(by).some((v) => v.length);
+            const ex = { name: sw.name, need: String(swapNeed(sw)), handling: String(sw.handling), txt: t };
+            if (!MARK_XY[sw.frm] && !sw.way_in.length) out.push([sw.code, fillTx("infSwapNoFrom", ex)]);
+            else if (anyWin) out.push([sw.code, fillTx("infSwapWin", ex)]);
+            else out.push([sw.code, fillTx("infSwapNone", ex)]);
+          }
+        } else if (key === "infAway") {
+          const thing = PROP_XY[txt(set.awayThing)], [pa, pb] = parseList(set.awayMarks).map((c) => MARK_XY[c]);
+          if (!thing || !pa || !pb) continue;
+          const spans = [];
+          for (const lens of Object.keys(LENSES)) {
+            const r = thingRuns(thing, LENSES[lens], TIMER_START, TAKE_END).filter((x) => x[1] - x[0] >= 60);
+            if (r.length) spans.push([lens, r[0][0], Math.max(...r.map((x) => x[1])), r]);
+          }
+          if (!spans.length) continue;
+          const a = Math.max(...spans.map((x) => x[1])), b = Math.min(...spans.map((x) => x[2]));
           const gaps = [];
           for (const [lens, , , r] of spans) {
-            for (let i = 0; i + 1 < r.length; i++) {
-              const g0 = r[i][1], g1 = r[i + 1][0];
-              if (a < g0 && g0 < b && g1 - g0 >= 5) gaps.push([lens, g0, g1]);
-            }
+            for (let i = 0; i + 1 < r.length; i++) { const g0 = r[i][1], g1 = r[i + 1][0]; if (a < g0 && g0 < b && g1 - g0 >= 5) gaps.push([lens, g0, g1]); }
           }
-          const exc = gaps.length ? (tx.infPotExc || "; except {list}").split("{list}").join(gaps.map(([lens, g0, g1]) => `${mmss(g0)} to ${mmss(g1)} at ${lens}`).join(", ")) : "";
-          const d = hypot(MARK_XY.K3[0] - MARK_XY.K4[0], MARK_XY.K3[1] - MARK_XY.K4[1]);
-          out.push(["pot", fillTx("infPot", { b: mmss(b), exc, prep_stove: fmt(d, 1) })]);
-        }
+          const exc = gaps.length ? (tx.infAwayExc || "; except {list}").split("{list}").join(gaps.map(([lens, g0, g1]) => `${mmss(g0)} to ${mmss(g1)} at ${lens}`).join(", ")) : "";
+          out.push([key, fillTx(key, { b: mmss(b), exc, apart: fmt(hypot(pa[0] - pb[0], pa[1] - pb[1]), 1) })]);
+        } else if (key !== "infAwayExc") out.push([key, fillTx(key)]);
       }
-      if (tx.infFridge) out.push(["fridge", fillTx("infFridge")]);
-      if (tx.infPass) out.push(["pass", fillTx("infPass")]);
       return out;
     }
 
@@ -926,12 +953,20 @@
       return out;
     }
     function hotRect() {
-      const isl = FIXTURES.find((f) => f.id === sStr("hotFixture", "island"));
-      const x1 = isl ? isl.x : 1.85;
-      let ys = parseList(set.hotMarks || "K3, K4, K5").filter((c) => MARK_XY[c]).map((c) => MARK_XY[c][1]);
-      if (!ys.length) ys = [1.75, 5.0];
+      const isl = FIXTURES.find((f) => f.id === txt(set.hotFixture));
+      let ys = parseList(set.hotMarks).filter((c) => MARK_XY[c]).map((c) => MARK_XY[c][1]);
+      if (!isl || !ys.length) return [0, 0, 0, 0];
+      const x1 = isl.x;
       const y0 = Math.min(...ys) - 0.3, y1 = Math.max(...ys) + 0.4;
       return [0.0, pyRound(y0, 2), pyRound(x1, 2), pyRound(y1 - y0, 2)];
+    }
+
+    function fitBox() {
+      const pts = [].concat(...AREAS.map((a) => a.poly), allMarks.map((m) => [m[2], m[3]]));
+      if (!pts.length) return [-1, -1, 12, 12];
+      const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+      const x0 = Math.min(...xs) - 0.5, y0 = Math.min(...ys) - 0.5;
+      return [x0, y0, Math.max(...xs) + 0.5 - x0, Math.max(...ys) + 0.5 - y0];
     }
 
     // ---- the board's data
@@ -993,8 +1028,8 @@
       // for the app (not in the Python build)
       ui: {
         title: sStr("title", "Shot plan"), eyebrow: sStr("eyebrow", ""), lens: LENS, talent: TALENT, camera: CAMERA,
-        views: { kitchen: parseBox(set.viewKitchen, [-1.25, -3.2, 8.6, 15.4]), route: parseBox(set.viewRoute, [-2.4, -4.2, 16.4, 30.6]) },
-        routeUntil: sNum("routeUntil", 31), labels: LABELS, barriers: BARRIERS, measure: MEASURE,
+        views: { kitchen: parseBox(set.viewKitchen, fitBox()), route: parseBox(set.viewRoute, fitBox()) },
+        routeUntil: sNum("routeUntil", -1e9), labels: LABELS, barriers: BARRIERS, measure: MEASURE,
         calc: { now: sStr("calcNow", "13:30"), stop: sStr("calcStop", "15:00"), reset: sNum("calcReset", 10) },
         texts: {
           stamp: fillTx("stamp"), degrees: tx.degrees || "0 = right on the plan, 90 = down, 180 = left, 270 = up.", about: fillTx("about").split("\n").filter(Boolean), runIntro: fillTx("runIntro"), runEnd: fillTx("runEnd"),
@@ -1014,7 +1049,7 @@
           const vals = k === "cells" && v && typeof v === "object" ? Object.values(v) : [v];
           for (const val of vals) {
             if (typeof val !== "string" || !val.includes("{")) continue;
-            const unknown = unknownTokens(val).filter((t) => !(name === "texts" && ["privacy", "a", "b", "name", "need", "handling", "txt", "exc", "prep_stove", "list"].includes(t)));
+            const unknown = unknownTokens(val).filter((t) => !(name === "texts" && ["privacy", "a", "b", "name", "need", "handling", "txt", "exc", "apart", "list"].includes(t)));
             for (const t of unknown) warn(TAB[name] || name, r.id, `${TAB[name] || name}: unknown token '{${t}}' (the Tokens list shows the ones the plan fills)`);
           }
         }

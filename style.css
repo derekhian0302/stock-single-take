@@ -96,6 +96,7 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
 .mapwrap { background: var(--floor); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); display: grid; place-items: center; }
 #map { width: 100%; height: auto; max-height: 76vh; display: block; touch-action: manipulation; }
+.editing #map { touch-action: none; }
 
 /* svg */
 .a-room { fill: var(--floor); }
@@ -257,8 +258,10 @@ ul.tight { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; font-si
 
 /* keyframe lanes */
 .lanes { display: grid; gap: 3px; }
+.strip, .lane, .swaps-strip .row { overflow: hidden; }
+.timeline.zoomed .strip .seg-b { font-size: 12px !important; }
 .lane { position: relative; height: 22px; border-radius: 4px; background: color-mix(in srgb, var(--rule) 30%, transparent); touch-action: pan-y; }
-.lane .ln { position: absolute; left: 4px; top: 3px; font-size: 11px; font-weight: 700; color: var(--muted); pointer-events: none; z-index: 2; text-transform: uppercase; letter-spacing: .04em; }
+.lane .ln { position: absolute; left: 2px; top: 3px; font-size: 10.5px; line-height: 16px; padding: 0 4px; border-radius: 4px; font-weight: 700; color: var(--muted); background: color-mix(in srgb, var(--panel) 82%, transparent); pointer-events: none; z-index: 5; letter-spacing: .03em; }
 .lane .walk { position: absolute; top: 9px; height: 4px; border-radius: 2px; opacity: .55; pointer-events: none; }
 .lane .kf { position: absolute; top: 3px; width: 16px; height: 16px; margin-left: -8px; border: 0; padding: 0; background: transparent; cursor: pointer; z-index: 3; touch-action: none; }
 .lane .kf::before { content: ""; position: absolute; left: 3px; top: 3px; width: 10px; height: 10px; transform: rotate(45deg); background: var(--c, var(--crew)); border: 1.5px solid var(--floor); border-radius: 2px; }
@@ -266,7 +269,7 @@ ul.tight { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; font-si
 .lane .kf.sel::before { background: var(--sel); border-color: var(--ink); width: 11px; height: 11px; }
 .lane .kf.has-text::after { content: ""; position: absolute; left: 7px; top: -2px; width: 3px; height: 3px; border-radius: 50%; background: var(--ink); }
 .lane .kf:focus-visible { outline: 2px solid var(--camera); }
-.lane .playhead { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--talent); opacity: .7; pointer-events: none; z-index: 4; }
+.lanes .playhead { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--talent); opacity: .7; pointer-events: none; z-index: 4; }
 .kf-key { display: inline-block; width: 9px; height: 9px; transform: rotate(45deg); background: var(--crew); border-radius: 2px; margin-right: 3px; }
 .kf-tip { position: fixed; z-index: 50; background: var(--ink); color: var(--panel); font-family: var(--font-mono); font-size: 12px; padding: 2px 6px; border-radius: 4px; pointer-events: none; }
 
@@ -353,4 +356,12 @@ ul.tight { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; font-si
   .form { grid-template-columns: minmax(0, 1fr); }
   .form label { margin-bottom: -4px; }
   .bar .here { order: 9; width: 100%; }
+}
+
+#import-lbl.off { opacity: .45; cursor: default; }
+@media (pointer: coarse) {
+  .lane { height: 30px; }
+  .lane .kf { width: 26px; height: 26px; margin-left: -13px; top: 2px; }
+  .lane .kf::before { left: 8px; top: 8px; }
+  .lane .kf.has-text::after { left: 12px; top: 1px; }
 }

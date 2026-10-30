@@ -69,10 +69,18 @@ async function firestoreStore({ key, config, emulator }) {
 
   const status = (s) => ev.emit("status", s);
   status("connecting");
-  F.onSnapshot(planRef, (d) => { const v = d.data(); lastSnap = v && v.lastSnap ? v.lastSnap.toMillis() : (d.exists() ? 0 : null); ev.emit("meta", v || null); },
+  F.onSnapshot(planRef, (d) => {
+    const v = d.data({ serverTimestamps: "estimate" });
+    const seen = v && v.lastSnap ? v.lastSnap.toMillis() : (d.exists() ? 0 : null);
+    if (seen !== null && (lastSnap === null || seen > lastSnap || !d.metadata.hasPendingWrites)) lastSnap = Math.max(seen, lastSnap || 0);
+    ev.emit("meta", v || null);
+  },
     (e) => status("error: " + e.code));
+  let serverSeen = false;
   F.onSnapshot(dataCol, { includeMetadataChanges: true }, (snap) => {
     const changed = [];
+    const fromServer = !snap.metadata.fromCache && !serverSeen;
+    if (!snap.metadata.fromCache) serverSeen = true;
     for (const ch of snap.docChanges()) {
       changed.push(ch.doc.id);
       if (ch.type === "removed") delete plan.sections[ch.doc.id];
@@ -80,20 +88,23 @@ async function firestoreStore({ key, config, emulator }) {
     }
     const first = !loaded;
     loaded = true;
-    if (changed.length || first) ev.emit("plan", plan, { first, changed, local: snap.metadata.hasPendingWrites });
+    if (changed.length || first || fromServer) ev.emit("plan", plan, { first, changed, local: snap.metadata.hasPendingWrites, fromServer });
     if (!pending) status(snap.metadata.fromCache ? (navigator.onLine === false ? "offline" : "connecting") : "saved");
   }, (e) => status("error: " + e.code));
 
   async function commit(ops, label, extra) {
     ops = withBefore(plan, ops);
     if (!ops.length) return null;
-    const b = F.writeBatch(db);
-    // an hourly copy of the whole plan, taken before the first change of the hour
-    if (lastSnap !== null && Date.now() - lastSnap > SNAP_EVERY && !extra?.noSnapshot) {
-      b.set(F.doc(snapCol), { at: F.serverTimestamp(), who: me.name || "Someone", label: "Hourly copy", sections: clone(plan.sections) });
-      b.set(planRef, { lastSnap: F.serverTimestamp() }, { merge: true });
+    // an hourly copy of the whole plan, taken before the first change of the hour (its own write, so a failed copy
+    // never blocks the change itself)
+    if (serverSeen && lastSnap !== null && Date.now() - lastSnap > SNAP_EVERY && !extra?.noSnapshot) {
       lastSnap = Date.now();
+      const sb = F.writeBatch(db);
+      sb.set(F.doc(snapCol), { at: F.serverTimestamp(), who: me.name || "Someone", label: "Hourly copy", sections: clone(plan.sections) });
+      sb.set(planRef, { lastSnap: F.serverTimestamp() }, { merge: true });
+      sb.commit().catch((e) => console.warn("hourly copy failed", e));
     }
+    const b = F.writeBatch(db);
     const bySec = {};
     for (const op of ops) {
       const s = (bySec[op.s] = bySec[op.s] || { items: {} });
@@ -114,7 +125,6 @@ async function firestoreStore({ key, config, emulator }) {
     const entry = { at: F.serverTimestamp(), who: me.name || "Someone", client: clientId, label: label || "Edit", ops: extra?.noHistoryOps ? [] : histOps(ops) };
     if (extra?.note) entry.note = extra.note;
     b.set(F.doc(histCol), entry);
-    b.set(planRef, { updated: F.serverTimestamp() }, { merge: true });
     pending++; status("saving");
     const p = b.commit().then(() => { pending--; if (!pending) status("saved"); }, (e) => { pending--; status("error: " + (e.code || e.message)); throw e; });
     if (navigator.onLine === false) status("offline");
@@ -131,7 +141,8 @@ async function firestoreStore({ key, config, emulator }) {
     b.set(F.doc(histCol), { at: F.serverTimestamp(), who: who || me.name || "Someone", client: clientId, label, ops: [] });
     b.set(planRef, { updated: F.serverTimestamp(), lastSnap: F.serverTimestamp(), schema: 1 }, { merge: true });
     pending++; status("saving");
-    await b.commit().finally(() => { pending--; if (!pending) status("saved"); });
+    try { await b.commit(); pending--; if (!pending) status("saved"); }
+    catch (e) { pending--; status("error: " + (e.code || e.message)); throw e; }
   }
 
   return {

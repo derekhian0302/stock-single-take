@@ -10,6 +10,13 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&":
 const el = (tag, attrs, parent) => { const e = document.createElementNS(svgNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
 const mmss = (t) => { const neg = t < 0; t = Math.round(Math.abs(t)); return (neg ? "-" : "") + Math.floor(t / 60) + ":" + String(t % 60).padStart(2, "0"); };
 const mmssH = (t) => { const neg = t < 0; const a = Math.abs(t); const s = Math.floor(a + 1e-9), half = a - s >= 0.25 ? ".5" : ""; return (neg ? "-" : "") + Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0") + half; };
+function parseTimeInput(raw) {
+  const v = String(raw || "").trim().replace(/\u2212/g, "-");
+  const m = /^(-?)(\d+)\.(\d\d)$/.exec(v);
+  if (m && Number(m[3]) < 60) return { t: (m[1] ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])), how: "m.ss" };
+  const t = window.PlanDerive.parseTime(v);
+  return { t, how: /:/.test(v) ? "m:ss" : "seconds" };
+}
 const ls = { get(k, d) { try { const v = localStorage.getItem("planner." + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem("planner." + k, JSON.stringify(v)); } catch (e) { /* storage blocked */ } } };
 const ago = (ms) => { const s = Math.max(0, (Date.now() - ms) / 1000); if (s < 50) return "just now"; if (s < 3600) return Math.round(s / 60) + " min ago"; if (s < 86400) return Math.round(s / 3600) + " h ago"; return new Date(ms).toLocaleDateString(); };
@@ -36,7 +43,7 @@ function makeApp(store) {
   const map = $("map");
   const state = {
     T: -10, playing: false, speed: 10, view: "auto", lens: null, tab: "take", sel: null, reset: "partial",
-    edit: ls.get("edit", false), moveMarks: false, kf: null, sec: "moves", filter: "", override: null,
+    edit: ls.get("edit", false), moveMarks: false, kf: null, sec: "moves", filter: "", override: null, zoom: "all", zc: 0,
   };
   let PLAN = { sections: {} }, DATA = null, WARN = [], CHECKS = null, firstData = true, me = ls.get("name", "");
   let byCode = {}, markXY = {}, markBy = {}, propXY = {}, VIEWS = {}, people = [], mainBeats = [], insideBeats = [];
@@ -55,16 +62,20 @@ function makeApp(store) {
     if (worker) worker.postMessage({ seq: s, plan });
     else { try { const r = PD.derive(plan); onDerived({ seq: s, data: r.data, warnings: r.warnings, checks: r.checks }); } catch (err) { onDerived({ seq: s, error: String(err.stack || err) }); } }
   }
+  let pendingMsg = null;
   function onDerived(msg) {
     if (msg.seq < doneSeq) return;
+    if (drag || kdrag) { pendingMsg = msg; return; }      // a drag in progress keeps the board it started with
     doneSeq = msg.seq;
     if (msg.error) { console.error(msg.error); toast("Couldn't work out the board from this change: " + msg.error.split("\n")[0]); return; }
     DATA = msg.data; WARN = msg.warnings; CHECKS = msg.checks;
     if (state.override && state.override.seq <= msg.seq) state.override = null;
     rebuild();
   }
+  let serverLoaded = store.mode === "local";
   store.on("plan", (plan, info) => {
     PLAN = plan;
+    if (info && info.fromServer) serverLoaded = true;
     if (info && !info.local && !info.first) noteRemote(info.changed);
     scheduleDerive();
   });
@@ -285,6 +296,7 @@ function makeApp(store) {
   function render() {
     if (!DATA) return;
     const T = state.T;
+    if (!kdrag) keepInZoom(T);
     applyView(wantedView(T));
     const k = viewNow === "route" ? 2.2 : 1;
     const camP = camera();
@@ -371,7 +383,27 @@ function makeApp(store) {
 
   // ---------------------------------------------------------------- timeline: beats, keyframe lanes, swap windows
   const t0s = -10;
-  const pct = (t) => ((t - t0s) / (DATA.takeEnd - t0s) * 100).toFixed(3) + "%";
+  // the timeline shows the whole take, or two minutes around the playhead (for placing keyframes in busy stretches)
+  function tw() {
+    if (state.zoom !== "near") return [t0s, DATA.takeEnd];
+    const span = 120;
+    let a = state.zc - span / 2, b = state.zc + span / 2;
+    if (a < t0s) { b += t0s - a; a = t0s; }
+    if (b > DATA.takeEnd) { a -= b - DATA.takeEnd; b = DATA.takeEnd; }
+    return [Math.max(t0s, a), b];
+  }
+  const pct = (t) => { const [a, b] = tw(); return ((t - a) / (b - a) * 100).toFixed(3) + "%"; };
+  function setZoom(z) {
+    state.zoom = z; state.zc = state.T;
+    for (const b of document.querySelectorAll("[data-zoom]")) b.setAttribute("aria-pressed", String(b.dataset.zoom === z));
+    $("timeline").classList.toggle("zoomed", z === "near");
+    buildStrip(); buildLanes(); buildSwapStrip(); render();
+  }
+  function keepInZoom(T) {
+    if (state.zoom !== "near") return;
+    const [a, b] = tw();
+    if (T < a + 4 || T > b - 4) { state.zc = T; buildStrip(); buildLanes(); buildSwapStrip(); }
+  }
   function buildStrip() {
     const strip = $("strip"); strip.innerHTML = "";
     for (const b of mainBeats) {
@@ -394,7 +426,7 @@ function makeApp(store) {
     for (const p of people) {
       if (!p.onMap) continue;
       const lane = document.createElement("div"); lane.className = "lane"; lane.dataset.code = p.code;
-      lane.innerHTML = `<span class="ln">${esc(p.initials)}</span>`;
+      lane.innerHTML = `<span class="ln" title="${esc(p.name)}">${esc(p.initials)}</span>`;
       const color = `var(--${p.color})`;
       for (let i = 0; i + 1 < p.track.length; i++) {
         const a = p.track[i], b = p.track[i + 1];
@@ -416,8 +448,9 @@ function makeApp(store) {
       box.appendChild(lane);
     }
     const ph = document.createElement("div"); ph.className = "playhead"; box.appendChild(ph);
+    if (state.focusKf) { const d = box.querySelector(`.kf[data-id="${CSS.escape(state.focusKf)}"]`); state.focusKf = null; if (d) d.focus(); }
   }
-  const laneT = (lane, clientX) => { const r = lane.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width)); return Math.round((t0s + f * (DATA.takeEnd - t0s)) * 2) / 2; };
+  const laneT = (lane, clientX) => { const r = lane.getBoundingClientRect(); const f = Math.max(0, Math.min(1, (clientX - r.left) / r.width)); const [a, b] = tw(); return Math.round((a + f * (b - a)) * 2) / 2; };
   function buildSwapStrip() {
     const box = $("swapstrip"); box.innerHTML = "";
     for (const sw of DATA.swaps) {
@@ -499,7 +532,7 @@ function makeApp(store) {
     else if (state.sel === "SIG") body.innerHTML = `<h2 style="margin-top:12px">Signals</h2><p class="small">${esc(DATA.ui.texts.signalsIntro)}</p>` + signalsHTML() + editNote("signals", "the Signals table");
     else {
       const p = byCode[state.sel];
-      body.innerHTML = personCardHTML(p) + (p.onMap ? `<p class="small edit-only">${esc(p.name)}'s card is built from their keyframes: change them on the map or in <button class="linkbtn" data-goto="moves" data-filter="${esc(p.code)}">Plan tables → Moves</button>.</p>`
+      body.innerHTML = personCardHTML(p) + (p.onMap ? `<p class="small edit-only">${esc(p.name)}'s card is built from their keyframes: change them on the map or in <button class="linkbtn" data-goto="moves" data-filter="who:${esc(p.code)}">Plan tables → Moves</button>.</p>`
         : editNote("cards", "Plan tables → Cards", p.code));
     }
     for (const b of body.querySelectorAll("[data-goto]")) b.addEventListener("click", () => gotoSection(b.dataset.goto, b.dataset.filter || ""));
@@ -579,8 +612,10 @@ function makeApp(store) {
     if (firstData) { firstData = false; afterFirstData(); }
     render();
     const empty = !Object.keys(PLAN.sections).some((k) => Object.keys(PLAN.sections[k] || {}).length);
-    if (empty) showEmpty();
+    if (empty && serverLoaded) showEmpty();
+    else if (!empty && $("inspector").dataset.empty === "1") { $("inspector").dataset.empty = ""; $("inspector").hidden = true; }
   }
+  function flushPending() { if (pendingMsg && !drag && !kdrag) { const m = pendingMsg; pendingMsg = null; onDerived(m); } }
   function afterFirstData() {
     const tab = hashParts[1];
     setTab(["take", "cards", "resets", "plan", "checks", "history", "about"].includes(tab) ? tab : "take");
@@ -589,7 +624,7 @@ function makeApp(store) {
     startPresence();
   }
   function showEmpty() {
-    const box = $("inspector"); box.hidden = false;
+    const box = $("inspector"); box.hidden = false; box.dataset.empty = "1"; box.dataset.kf = "";
     box.innerHTML = `<h2>This plan is empty</h2><p class="small">Load a copy of a plan (a .json file) on the History tab to start.</p><button class="btn" id="go-hist">Go to History</button>`;
     $("go-hist").addEventListener("click", () => setTab("history"));
   }
@@ -599,22 +634,39 @@ function makeApp(store) {
   async function commit(ops, label, opts) {
     if (!state.edit && !(opts && opts.always)) { toast("Turn on Edit to change the plan."); return null; }
     if (!me) { await askName(); if (!me) return null; }
+    // a field edit to a row someone else has just deleted would bring back half a row: drop it
+    const gone = ops.filter((op) => op.f && !(PLAN.sections[op.s] || {})[op.id]);
+    if (gone.length) {
+      ops = ops.filter((op) => !gone.includes(op));
+      toast("Someone else just deleted that row, so this change wasn't saved.");
+      if (!ops.length) return null;
+    }
     try {
       const r = await store.commit(ops, label, opts);
       if (!r) return null;
-      if (!(opts && opts.noUndo)) { undoStack.push({ label, ops: r.ops }); $("undo").disabled = false; }
-      if (!(opts && opts.quiet)) toast(label, true);
+      let entry = null;
+      if (!(opts && opts.noUndo)) { entry = { label, ops: r.ops }; undoStack.push(entry); $("undo").disabled = false; }
+      if (!(opts && opts.quiet)) toast(label, entry);
       r.done.catch((e) => toast("Couldn't save: " + (e.code || e.message) + ". Check your connection, then try again."));
       return r;
     } catch (e) { console.error(e); toast("Couldn't save: " + (e.message || e)); return null; }
   }
-  async function undoLast() {
-    const last = undoStack.pop();
+  // undo one of your own changes; if someone has changed the same thing since, ask first
+  const stable = (v) => JSON.stringify(v === undefined ? null : v, (k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.keys(x).filter((kk) => !kk.startsWith("_")).sort().reduce((o, kk) => { o[kk] = x[kk]; return o; }, {}) : x));
+  const sameVal = (a, b) => stable(a) === stable(b);
+  const currentVal = (s2, id, f) => { const row = (PLAN.sections[s2] || {})[id]; return f ? getF(row || {}, f.join(".")) : row; };
+  async function undoEntry(entry, force) {
+    const changed = entry.ops.filter((o) => !sameVal(currentVal(o.s, o.id, o.f), o.v));
+    if (changed.length && !force) {
+      toastAsk("Someone has changed this since. Undo yours anyway?", "Undo anyway", () => undoEntry(entry, true));
+      return;
+    }
+    const i = undoStack.indexOf(entry);
+    if (i >= 0) undoStack.splice(i, 1);
     $("undo").disabled = !undoStack.length;
-    if (!last) return;
-    const ops = last.ops.map((o) => ({ s: o.s, id: o.id, f: o.f, v: o.before }));
-    await commit(ops, "Undo: " + last.label, { noUndo: true, always: true });
+    await commit(entry.ops.map((o) => ({ s: o.s, id: o.id, f: o.f, v: o.before })), "Undo: " + entry.label, { noUndo: true, always: true });
   }
+  function undoLast() { const last = undoStack[undoStack.length - 1]; if (last) undoEntry(last); }
   $("undo").addEventListener("click", undoLast);
   function nextO(sec) { const rows = Object.values(PLAN.sections[sec] || {}); return rows.reduce((m, r) => Math.max(m, Number(r.o) || 0), 0) + 1; }
   function orderBetween(sec, afterId) {
@@ -625,11 +677,18 @@ function makeApp(store) {
     return (a + b) / 2;
   }
   let toastTimer = null;
-  function toast(msg, withUndo) {
+  function toast(msg, entry) {
     const t = $("toast"); t.hidden = false;
-    t.innerHTML = `<span>${esc(msg)}</span>` + (withUndo ? `<button type="button" id="toast-undo">Undo</button>` : "");
-    if (withUndo) $("toast-undo").addEventListener("click", () => { t.hidden = true; undoLast(); });
-    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, withUndo ? 6000 : 4500);
+    t.innerHTML = `<span>${esc(msg)}</span>` + (entry ? `<button type="button" id="toast-undo">Undo</button>` : "");
+    if (entry) $("toast-undo").addEventListener("click", () => { t.hidden = true; undoEntry(entry); });
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, entry ? 6000 : 4500);
+  }
+  function toastAsk(msg, yes, onYes) {
+    const t = $("toast"); t.hidden = false;
+    t.innerHTML = `<span>${esc(msg)}</span><button type="button" id="toast-yes">${esc(yes)}</button><button type="button" id="toast-no">Keep theirs</button>`;
+    $("toast-yes").addEventListener("click", () => { t.hidden = true; onYes(); });
+    $("toast-no").addEventListener("click", () => { t.hidden = true; });
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 12000);
   }
   function noteRemote(changed) {
     let best = null;
@@ -638,25 +697,27 @@ function makeApp(store) {
   }
 
   // ---------------------------------------------------------------- your name, on your changes
+  let nameResolve = null;
   function askName() {
     return new Promise((resolve) => {
+      nameResolve = resolve;
       const names = [...new Set((DATA ? DATA.people : []).map((p) => p.name).filter((n) => /^[A-Z][a-z]+$/.test(n)))];
       openModal("Your name", `<p class="small">It goes on your changes in History, so the team knows who changed what.</p>
         <div class="chips" id="name-chips">${names.map((n) => `<button type="button" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div>
         <div class="form" style="grid-template-columns:minmax(0,1fr)"><input id="name-in" placeholder="Or type your name" value="${esc(me)}" maxlength="40"></div>
         <div class="btnrow"><button class="btn primary" id="name-ok">Save</button><button class="btn" id="name-cancel">Cancel</button></div>`);
-      const done = (n) => { n = (n || "").trim(); if (n) { me = n; ls.set("name", n); store.setName(n); $("me-name").textContent = n; startPresence(); } closeModal(); resolve(n); };
+      const done = (n) => { n = (n || "").trim(); if (n) { me = n; ls.set("name", n); store.setName(n); $("me-name").textContent = n; startPresence(); } nameResolve = null; closeModal(); resolve(n); };
       for (const b of document.querySelectorAll("#name-chips button")) b.addEventListener("click", () => done(b.dataset.n));
       $("name-ok").addEventListener("click", () => done($("name-in").value));
       $("name-in").addEventListener("keydown", (e) => { if (e.key === "Enter") done($("name-in").value); });
-      $("name-cancel").addEventListener("click", () => { closeModal(); resolve(""); });
+      $("name-cancel").addEventListener("click", () => done(""));
       setTimeout(() => $("name-in").focus(), 30);
     });
   }
-  $("me").addEventListener("click", askName);
+  $("me").addEventListener("click", () => askName());
   $("me-name").textContent = me || "set your name";
   function openModal(title, html) { $("modal-title").textContent = title; $("modal-body").innerHTML = html; $("modal").hidden = false; }
-  function closeModal() { $("modal").hidden = true; $("modal-body").innerHTML = ""; }
+  function closeModal() { $("modal").hidden = true; $("modal-body").innerHTML = ""; if (nameResolve) { const f = nameResolve; nameResolve = null; f(""); } }
   $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeModal(); });
 
   // ---------------------------------------------------------------- edit mode
@@ -668,7 +729,9 @@ function makeApp(store) {
     document.body.classList.toggle("editing", on);
     map.classList.toggle("marks-movable", on && state.moveMarks);
     for (const e of document.querySelectorAll(".edit-only")) e.hidden = !on;
+    $("import-file").disabled = !on; $("import-lbl").classList.toggle("off", !on);
     if (state.tab === "plan") renderPlan(true);
+    if (state.tab === "history") { renderHistory(); renderSnaps(); }
     renderInspector();
     if (DATA) { viewNow = null; render(); }
   }
@@ -738,6 +801,7 @@ function makeApp(store) {
     if (!drag || e.pointerId !== drag.id) return;
     const d = drag; drag = null;
     gDrag.innerHTML = "";
+    setTimeout(flushPending, 0);
     if (d.kind === "person") {
       if (nodes[d.code]) nodes[d.code].g.classList.remove("dragging");
       if (!d.moved) { personClick(d.code); return; }
@@ -753,7 +817,13 @@ function makeApp(store) {
     }
   };
   map.addEventListener("pointerup", endDrag);
-  map.addEventListener("pointercancel", (e) => { if (drag && drag.kind === "person") { state.override = null; render(); } drag = null; gDrag.innerHTML = ""; });
+  map.addEventListener("pointercancel", () => {
+    if (drag && (drag.kind === "person" || drag.kind === "face")) { state.override = null; if (nodes[drag.code]) nodes[drag.code].g.classList.remove("dragging"); }
+    const wasMark = drag && drag.kind === "mark";
+    drag = null; gDrag.innerHTML = "";
+    if (wasMark) viewNow = null;
+    render(); flushPending();
+  });
 
   function personClick(code) {
     if (!state.edit) { openCard(code); return; }
@@ -818,18 +888,25 @@ function makeApp(store) {
   const endK = (e) => {
     if (!kdrag || e.pointerId !== kdrag.id) return;
     const g = kdrag; kdrag = null; tipEl.hidden = true;
-    if (!g.moved || g.T === g.k.t) { selectKey(g.k.id, true); return; }
+    setTimeout(flushPending, 0);
+    if (!g.moved || g.T === g.k.t) { selectKey(g.k.id, true, true); return; }
     commit([{ s: "moves", id: g.k.id, f: ["t"], v: g.T }], `${g.p.name}: keyframe ${mmssH(g.k.t)} moved to ${mmssH(g.T)}`).then((r) => { if (r) { state.kf = g.k.id; setT(g.T); } else buildLanes(); });
   };
   $("lanes").addEventListener("pointerup", endK);
-  $("lanes").addEventListener("pointercancel", () => { kdrag = null; tipEl.hidden = true; buildLanes(); });
+  window.addEventListener("pointerup", (e) => { if (kdrag) endK(e); });
+  $("lanes").addEventListener("lostpointercapture", (e) => { if (kdrag) endK(e); });
+  $("lanes").addEventListener("pointercancel", () => { kdrag = null; tipEl.hidden = true; buildLanes(); flushPending(); });
   $("lanes").addEventListener("keydown", (e) => {
     const d = e.target.closest(".kf"); if (!d) return;
     const p = byCode[d.dataset.code]; const k = p.keys.find((x) => x.id === d.dataset.id); if (!k) return;
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); selectKey(k.id, true); }
     else if (state.edit && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
       e.preventDefault();
-      const nt = k.t + (e.key === "ArrowLeft" ? -0.5 : 0.5);
+      const i = p.keys.indexOf(k);
+      const lo = i > 0 ? p.keys[i - 1].t + 0.5 : -60, hi = i + 1 < p.keys.length ? p.keys[i + 1].t - 0.5 : DATA.takeEnd;
+      const nt = Math.max(lo, Math.min(hi, k.t + (e.key === "ArrowLeft" ? -0.5 : 0.5)));
+      if (nt === k.t) return;
+      state.focusKf = k.id;
       commit([{ s: "moves", id: k.id, f: ["t"], v: nt }], `${p.name}: keyframe ${mmssH(k.t)} moved to ${mmssH(nt)}`, { quiet: true }).then(() => { state.kf = k.id; setT(nt); });
     }
   });
@@ -840,21 +917,30 @@ function makeApp(store) {
     for (const p of people) { const k = p.keys.find((x) => x.id === state.kf); if (k) return { p, k }; }
     return null;
   }
-  function selectKey(id, seek) {
+  function selectKey(id, seek, reveal) {
     state.kf = id;
     const s = selectedKey();
     if (s && seek) setT(s.k.t);
     for (const b of document.querySelectorAll(".lane .kf")) b.classList.toggle("sel", b.dataset.id === id);
     if (state.tab !== "take") setTab("take");
-    renderInspector(); render();
+    renderInspector(true); render();
+    if (reveal && window.innerWidth < 980) { const r2 = $("inspector").getBoundingClientRect(); if (r2.top > window.innerHeight - 80) toast("Its details are below the map: scroll down to edit them."); }
   }
-  function renderInspector() {
+  function patchInspector(p, k) {
+    const setv = (id, v) => { const e = $(id); if (e && e !== document.activeElement && e.value !== v) e.value = v; };
+    const faceIsNum = typeof k.face === "number";
+    setv("i-t", mmssH(k.t)); setv("i-mark", k.mark || ""); setv("i-xy", k.mark ? "" : k.at);
+    setv("i-face", faceIsNum ? "#deg" : (k.face === null ? "" : String(k.face))); setv("i-deg", faceIsNum ? String(k.face) : "");
+    setv("i-what", k.what); setv("i-watch", k.watch); setv("i-beat", k.beat || ""); setv("i-status", k.status || "");
+    const h = $("inspector").querySelector("h2"); if (h) h.textContent = `${p.name} · ${mmssH(k.t)}`;
+  }
+  function renderInspector(force) {
     const box = $("inspector");
     const s = selectedKey();
-    if (!s || state.tab !== "take") { if (!(box.firstElementChild && box.firstElementChild.textContent === "This plan is empty")) box.hidden = true; return; }
+    if (!s || state.tab !== "take") { if (box.dataset.empty !== "1") box.hidden = true; return; }
     const { p, k } = s;
-    if (box.contains(document.activeElement) && box.dataset.kf === k.id && box.dataset.seq === String(doneSeq)) return;
-    box.hidden = false; box.dataset.kf = k.id; box.dataset.seq = String(doneSeq);
+    if (!force && !box.hidden && box.dataset.kf === k.id && box.contains(document.activeElement)) { patchInspector(p, k); return; }
+    box.hidden = false; box.dataset.kf = k.id; box.dataset.empty = "";
     const dis = state.edit ? "" : "disabled";
     const row = (PLAN.sections.moves || {})[k.id] || {};
     const markOpts = DATA.marks.map((m) => `<option value="${esc(m.code)}"${k.mark === m.code ? " selected" : ""}>${esc(m.code)}: ${esc(m.label)}</option>`).join("");
@@ -871,7 +957,7 @@ function makeApp(store) {
     box.innerHTML = `<div class="inspector-head"><h2>${esc(p.name)} · ${mmssH(k.t)}</h2><span class="seg"><button id="i-prev" ${i > 0 ? "" : "disabled"} title="Their previous keyframe">◀</button><button id="i-next" ${i + 1 < p.keys.length ? "" : "disabled"} title="Their next keyframe">▶</button><button id="i-close" title="Close">✕</button></span></div>
       <p class="small">Keyframe ${i + 1} of ${p.keys.length}. ${state.edit ? "Changes save when you leave a field." : "Turn on Edit to change it."}</p>
       <div class="form">
-        <label for="i-t">Take time</label><input id="i-t" value="${esc(mmssH(k.t))}" ${dis} inputmode="decimal">
+        <label for="i-t">Take time</label><input id="i-t" value="${esc(mmssH(k.t))}" ${dis} placeholder="m:ss" autocomplete="off">
         <label for="i-mark">Where</label><div class="pair"><select id="i-mark" ${dis}><option value="">A spot (x, y)</option>${markOpts}</select><input id="i-xy" value="${esc(k.mark ? "" : k.at)}" placeholder="x, y (meters)" ${dis}></div>
         <label for="i-face">Facing</label><div class="pair"><select id="i-face" ${dis}>${faceOpts}</select><input id="i-deg" type="number" step="5" value="${faceIsNum ? esc(k.face) : ""}" placeholder="degrees" ${dis} ${faceIsNum ? "" : "hidden"}></div>
         <label for="i-what">What they do</label><textarea id="i-what" ${dis}>${esc(k.what)}</textarea>
@@ -886,11 +972,15 @@ function makeApp(store) {
     $("i-next").addEventListener("click", () => selectKey(p.keys[i + 1].id, true));
     $("i-close").addEventListener("click", () => { state.kf = null; renderInspector(); buildLanes(); render(); });
     if (!state.edit) return;
-    $("i-t").addEventListener("change", (e) => { const t = PD.parseTime(e.target.value); if (t === null) { toast("Take time is m:ss, like 3:05 or 3:05.5"); return; } set1("t", t, "time " + mmssH(t)).then(() => setT(t)); });
+    $("i-t").addEventListener("change", (e) => {
+      const { t, how } = parseTimeInput(e.target.value);
+      if (t === null || t < -600 || t > DATA.takeEnd + 600) { toast("Take time is m:ss, like 3:05 or 3:05.5"); e.target.value = mmssH(k.t); return; }
+      commit([{ s: "moves", id: k.id, f: ["t"], v: t }], `${p.name}: keyframe now at ${mmssH(t)}${how === "seconds" ? " (read as seconds)" : ""}`).then(() => setT(t));
+    });
     $("i-mark").addEventListener("change", (e) => { if (e.target.value) set1("at", e.target.value, "moved to " + e.target.value); else $("i-xy").focus(); });
     $("i-xy").addEventListener("change", (e) => { const v = e.target.value.trim(); if (!/^-?\d+(\.\d+)?\s*[, ]\s*-?\d+(\.\d+)?$/.test(v)) { toast("A spot is 'x, y' in meters, like 1.40, 2.95"); return; } set1("at", v, "moved to " + v); });
     $("i-face").addEventListener("change", (e) => { const v = e.target.value; if (v === "#deg") { $("i-deg").hidden = false; $("i-deg").focus(); return; } set1("face", v, v ? "facing " + v : "keeps the last facing"); });
-    $("i-deg").addEventListener("change", (e) => { const n = Number(e.target.value); if (!isFinite(n)) return; set1("face", ((n % 360) + 360) % 360, "facing " + n + "°"); });
+    $("i-deg").addEventListener("change", (e) => { const raw = e.target.value.trim(); if (raw === "") { set1("face", "", "keeps the last facing"); return; } const n = Number(raw); if (!isFinite(n)) return; set1("face", ((n % 360) + 360) % 360, "facing " + n + "°"); });
     $("i-what").addEventListener("change", (e) => set1("what", e.target.value.trim(), "what they do"));
     $("i-watch").addEventListener("change", (e) => set1("watch", e.target.value.trim(), "watch for"));
     $("i-beat").addEventListener("change", (e) => set1("beat", e.target.value, "beat " + (e.target.value || "by time")));
@@ -899,7 +989,7 @@ function makeApp(store) {
     $("i-dup").addEventListener("click", () => {
       const id = newId(), t = k.t + 5;
       if (keyAt(p, t)) { toast("There's already a keyframe 5 s later."); return; }
-      commit([{ s: "moves", id, f: null, v: Object.assign({}, cleanRow(row), { o: nextO("moves"), t, what: "", watch: "" }) }], `${p.name}: copied the ${mmssH(k.t)} keyframe to ${mmssH(t)}`).then((r) => { if (r) { state.kf = id; setT(t); } });
+      commit([{ s: "moves", id, f: null, v: Object.assign({}, cleanRow(row), { o: nextO("moves"), t, what: "", watch: "", status: "Proposed" }) }], `${p.name}: copied the ${mmssH(k.t)} keyframe to ${mmssH(t)}`).then((r) => { if (r) { state.kf = id; setT(t); } });
     });
     $("i-del").addEventListener("click", () => {
       $("i-delbox").innerHTML = `<span class="confirm">Delete this keyframe? <button class="btn danger" id="i-del-y">Delete</button><button class="btn" id="i-del-n">Keep</button></span>`;
@@ -918,7 +1008,7 @@ function makeApp(store) {
       cols: () => [C("who", "Person", "select", { opts: () => DATA.people.map((p) => p.code), cls: "narrow" }), C("t", "Take time", "time"), C("at", "Where", "text", { cls: "narrow" }), C("face", "Facing", "text", { cls: "narrow" }),
         C("what", "What they do", "long"), C("watch", "Watch for", "long"), C("beat", "Beat", "select", { opts: () => [""].concat(DATA.beats.map((b) => b.code)), cls: "narrow" }), C("status", "Status", "select", { opts: () => ST, cls: "narrow" })],
       sort: (a, b) => (personOrder(a.who) - personOrder(b.who)) || ((PD.parseTime(a.t) || 0) - (PD.parseTime(b.t) || 0)), newRow: () => ({ who: (state.filter && byCode[state.filter.toUpperCase()]) ? state.filter.toUpperCase() : (DATA.people[0] || {}).code || "", t: Math.round(state.T * 2) / 2, at: "", face: "", what: "", watch: "", beat: "", status: "Proposed" }) },
-    marks: { title: "Marks", help: "Numbered spots (tape), things on the counters, and places off the plan. Plan x and y are meters (see Settings). Moving a mark moves every keyframe that names it.",
+    marks: { title: "Marks", help: "Numbered spots (tape), things on the counters, and places off the plan. Plan x and y are meters (see Settings). Moving a mark moves every keyframe that names it. Renaming a code doesn't rename it in Moves, Swaps or Resets: Checks lists anything that stops reading.",
       cols: () => [C("code", "Code", "text", { cls: "code" }), C("name", "Name", "long"), C("kind", "Kind", "select", { opts: () => markKinds(), cls: "narrow" }), C("status", "Status", "select", { opts: () => ST, cls: "narrow" }),
         C("x", "Plan x", "num"), C("y", "Plan y", "num"), C("find", "Find it on the day", "long"), C("note", "Source or note", "long")] },
     beats: { title: "Beats", help: "The take's beats. Times are take time (m:ss) from 'action'. 'Inside' marks a beat that sits inside another one. 'Board note' replaces the in-frame pill during that beat.",
@@ -1001,13 +1091,14 @@ function makeApp(store) {
     }
     if (c.type === "long") return `<td class="${c.cls || "wide-col"}"><textarea ${dk} ${dis} rows="1">${esc(v)}</textarea></td>`;
     const shown = c.type === "time" ? (typeof v === "number" ? mmssH(v) : (v == null ? "" : v)) : (v == null ? "" : v);
-    return `<td class="${c.type === "num" ? "num" : c.type === "time" ? "time" : c.cls || ""}"><input ${dk} value="${esc(shown)}" ${dis}${c.type === "num" || c.type === "time" ? ' inputmode="decimal"' : ""}></td>`;
+    return `<td class="${c.type === "num" ? "num" : c.type === "time" ? "time" : c.cls || ""}"><input ${dk} value="${esc(shown)}" ${dis}${c.type === "num" ? ' inputmode="decimal"' : c.type === "time" ? ' placeholder="m:ss" autocomplete="off"' : ""}></td>`;
   }
   function sectionRows(sec) {
     const s = SECTIONS[sec];
     const rows = Object.entries(PLAN.sections[sec] || {}).map(([id, r]) => Object.assign({ id }, r));
     rows.sort((a, b) => (s.sort ? s.sort(a, b) : 0) || ((Number(a.o) || 0) - (Number(b.o) || 0)));
-    const f = state.filter.trim().toLowerCase();
+    const raw = state.filter.trim(), f = raw.toLowerCase();
+    if (/^who:/i.test(raw)) { const code = raw.slice(4).trim(); return rows.filter((r) => r.who === code); }
     return f ? rows.filter((r) => JSON.stringify(cleanRow(r)).toLowerCase().includes(f) || r.id === f) : rows;
   }
   function renderPlan(force) {
@@ -1024,7 +1115,7 @@ function makeApp(store) {
     $("sec-warn").innerHTML = secWarn.length ? `<div class="pill warn" style="margin:6px 0">${secWarn.length} row${secWarn.length > 1 ? "s" : ""} here can't be read: see Checks</div>` : "";
     tbl.dataset.sec = sec;
     tbl.innerHTML = `<thead><tr>${cols.map((c) => `<th>${esc(c.label)}</th>`).join("")}${s.fixed ? "" : "<th></th>"}</tr></thead><tbody>` + rows.map((r) =>
-      `<tr data-id="${esc(r.id)}" class="${warnedIds.has(r.id) ? "warned" : ""}" title="${r._by ? esc("Last changed by " + r._by + ", " + ago(tsMs(r._at))) : ""}">${cols.map((c) => cellHTML(c, r)).join("")}${s.fixed ? "" : `<td class="acts">${state.edit ? `<button type="button" data-act="up" title="Move up">↑</button><button type="button" data-act="down" title="Move down">↓</button><button type="button" data-act="ins" title="Add a row below">+</button><button type="button" data-act="del" title="Delete this row">✕</button>` : ""}</td>`}</tr>`).join("") + "</tbody>";
+      `<tr data-id="${esc(r.id)}" class="${warnedIds.has(r.id) ? "warned" : ""}" title="${r._by ? esc("Last changed by " + r._by + ", " + ago(tsMs(r._at))) : ""}">${cols.map((c) => cellHTML(c, r)).join("")}${s.fixed ? "" : `<td class="acts">${state.edit ? `${s.sort ? "" : `<button type="button" data-act="up" title="Move up">↑</button><button type="button" data-act="down" title="Move down">↓</button>`}<button type="button" data-act="ins" title="Add a row below">+</button><button type="button" data-act="del" title="Delete this row">✕</button>` : ""}</td>`}</tr>`).join("") + "</tbody>";
     for (const ta of tbl.querySelectorAll("textarea")) fitArea(ta);
     $("sec-count").textContent = `${rows.length} row${rows.length === 1 ? "" : "s"}${state.filter ? " (filtered)" : ""}`;
     $("add-row").hidden = !state.edit || s.fixed;
@@ -1044,7 +1135,7 @@ function makeApp(store) {
   }
   function parseCell(c, raw) {
     const s = raw.trim();
-    if (c.type === "time") { const t = PD.parseTime(s); return t === null ? s : t; }
+    if (c.type === "time") { const t = parseTimeInput(s).t; return t === null ? s : t; }
     if (c.type === "num") { if (s === "") return ""; const n = Number(s); return isFinite(n) && /^-?\d*\.?\d+(e-?\d+)?$/i.test(s) ? n : s; }
     return s;
   }
@@ -1054,7 +1145,8 @@ function makeApp(store) {
     const c = SECTIONS[sec].cols().find((x) => x.key === inp.dataset.f);
     const v = parseCell(c, inp.value);
     const what = rowName(sec, (PLAN.sections[sec] || {})[id]);
-    commit([{ s: sec, id, f: c.key.split("."), v }], `${SECTIONS[sec].title}: ${c.label}${what ? " (" + what + ")" : ""}`, { quiet: true });
+    const isTime = c.type === "time" && typeof v === "number";
+    commit([{ s: sec, id, f: c.key.split("."), v }], `${SECTIONS[sec].title}: ${c.label}${what ? " (" + what + ")" : ""}${isTime ? " now " + mmssH(v) + (parseTimeInput(inp.value).how === "seconds" ? ", read as seconds" : "") : ""}`, { quiet: !isTime });
   });
   $("ptable").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-act]"); if (!b) return;
@@ -1151,7 +1243,7 @@ function makeApp(store) {
     if (b.dataset.undo !== undefined) {
       const h = HIST[Number(b.dataset.undo)];
       const ops = undoOps(h);
-      const changed = ops.filter((o) => { const row = getRow(o.s, o.id); const cur = o.f ? getF(row || {}, o.f.join(".")) : (row ? cleanRow(row) : undefined); return JSON.stringify(stripMeta(cur)) !== JSON.stringify(stripMeta(o.expect)); });
+      const changed = ops.filter((o) => !sameVal(currentVal(o.s, o.id, o.f), o.expect));
       if (changed.length) {
         b.parentElement.innerHTML = `<span class="confirm">Changed again since. Undo anyway? <button class="btn small-btn" data-force="${b.dataset.undo}">Undo</button></span>`;
         return;
@@ -1187,7 +1279,14 @@ function makeApp(store) {
     if (!f) return;
     let j;
     try { j = JSON.parse(await f.text()); } catch (err) { $("import-msg").textContent = "That file isn't a plan copy (it isn't JSON)."; return; }
-    if (!j || !j.sections || typeof j.sections !== "object") { $("import-msg").textContent = "That file isn't a plan copy (no sections)."; return; }
+    const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
+    if (!j || !isObj(j.sections) || !["moves", "marks", "people", "beats"].some((k2) => isObj(j.sections[k2]))) { $("import-msg").textContent = "That file isn't a plan copy (it has no Moves, Marks, People or Beats)."; return; }
+    const badRow = Object.entries(j.sections).find(([, rows]) => !isObj(rows) || Object.values(rows).some((r) => !isObj(r)));
+    if (badRow) { $("import-msg").textContent = `That file isn't a plan copy: the ${badRow[0]} table isn't a set of rows.`; return; }
+    if (!state.edit) { $("import-msg").textContent = "Turn on Edit to load a copy."; return; }
+    if (!serverLoaded) { $("import-msg").textContent = "You're offline. Load a copy once you're connected, so nothing newer gets overwritten."; return; }
+    const problem = checkStorable(j.sections);
+    if (problem) { $("import-msg").textContent = "That file can't be stored: " + problem + "."; return; }
     let test; try { test = PD.derive({ sections: j.sections }); } catch (err) { $("import-msg").textContent = "That plan can't be read: " + err.message; return; }
     const n = Object.values(j.sections).reduce((s, v) => s + Object.keys(v || {}).length, 0);
     $("import-msg").innerHTML = `<span class="confirm">Replace the whole plan with this file (${n} rows, ${test.warnings.length} warnings)? <button class="btn small-btn danger" id="imp-y">Replace</button><button class="btn small-btn" id="imp-n">Cancel</button></span>`;
@@ -1198,6 +1297,18 @@ function makeApp(store) {
       catch (err) { $("import-msg").textContent = "Couldn't load it: " + (err.code || err.message); }
     });
   });
+
+  function checkStorable(sections) {
+    const bad = [];
+    const walk = (v, path, inArray) => {
+      if (bad.length > 2) return;
+      if (Array.isArray(v)) { if (inArray) bad.push(`${path} has a list inside a list`); v.forEach((x, i) => walk(x, `${path}[${i}]`, true)); }
+      else if (v && typeof v === "object") for (const [k2, x] of Object.entries(v)) { if (k2 === "" || /^__.*__$/.test(k2)) bad.push(`${path} uses the name '${k2}'`); walk(x, `${path}.${k2}`, false); }
+    };
+    walk(sections, "sections", false);
+    for (const [name, items] of Object.entries(sections)) if (JSON.stringify(items || {}).length > 900000) bad.push(`the ${name} table is over 900 KB`);
+    return bad.slice(0, 3).join("; ");
+  }
 
   // ---------------------------------------------------------------- print
   $("print").addEventListener("click", () => {
@@ -1297,12 +1408,14 @@ function makeApp(store) {
   $("prev").addEventListener("click", () => { const s = starts().filter((t) => t < state.T - 0.6); setT(s.length ? s[s.length - 1] : -10); });
   $("next").addEventListener("click", () => { const s = starts().find((t) => t > state.T + 0.1); setT(s === undefined ? DATA.takeEnd : s); });
   $("back1").addEventListener("click", () => setT(Math.round(state.T * 2) / 2 - 0.5));
+  for (const b of document.querySelectorAll("[data-zoom]")) b.addEventListener("click", () => setZoom(b.dataset.zoom));
   $("fwd1").addEventListener("click", () => setT(Math.round(state.T * 2) / 2 + 0.5));
   document.addEventListener("keydown", (e) => {
     const tag = document.activeElement && document.activeElement.tagName;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z" && !["INPUT", "TEXTAREA", "SELECT"].includes(tag)) { e.preventDefault(); undoLast(); return; }
-    if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) && document.activeElement.id !== "scrub") return;
     if (!$("modal").hidden) { if (e.key === "Escape") closeModal(); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "z" && !["INPUT", "TEXTAREA", "SELECT"].includes(tag)) { e.preventDefault(); undoLast(); return; }
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (["INPUT", "SELECT", "TEXTAREA"].includes(tag) && document.activeElement.id !== "scrub") return;
     if (e.key === " " && tag !== "BUTTON") { e.preventDefault(); togglePlay(); }
     else if (e.key === "[") $("prev").click();
     else if (e.key === "]") $("next").click();
