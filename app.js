@@ -1056,7 +1056,7 @@ function makeApp(store) {
     labels: { group: "Room", title: "Map labels", help: "Words on the map. 'Only on the whole route' hides a label in the kitchen view.",
       cols: () => [C("text", "Label", "text"), C("x", "x", "num"), C("y", "y", "num"), C("size", "Size", "num"), C("style", "Style", "select", { opts: () => ["", "strong", "hold"], cls: "narrow" }), C("anchor", "Anchor", "select", { opts: () => ["middle", "start", "end"], cls: "narrow" }), C("view", "Only on the whole route", "select", { opts: () => ["", "Whole route"], cls: "narrow" })] },
     settings: { group: "Setup", title: "Settings", help: "Names, the timer, lenses, views and the model's numbers.", fixed: true,
-      cols: () => [C("id", "Setting", "ro"), C("value", "Value", "text", { cls: "wide-col" }), C("note", "What it does", "ro")] },
+      cols: () => [C("id", "Setting", "ro"), C("value", "Value", "long", { cls: "wide-col" }), C("note", "What it does", "ro")] },
     texts: { group: "Setup", title: "Wording", help: "Wording on the board and in prints. {tokens} are filled in from the plan.", fixed: true,
       cols: () => [C("id", "Where it shows", "ro"), C("text", "Text", "long", { cls: "wide-col" })] },
   };
@@ -1143,7 +1143,8 @@ function makeApp(store) {
     const inp = e.target.closest("[data-f]"); if (!inp) return;
     const sec = $("ptable").dataset.sec, id = inp.closest("tr").dataset.id;
     const c = SECTIONS[sec].cols().find((x) => x.key === inp.dataset.f);
-    const v = parseCell(c, inp.value);
+    let v = parseCell(c, inp.value);
+    if (sec === "settings" && c.key === "value" && /^-?\d+(\.\d+)?$/.test(String(v).trim())) v = Number(v);
     const what = rowName(sec, (PLAN.sections[sec] || {})[id]);
     const isTime = c.type === "time" && typeof v === "number";
     commit([{ s: sec, id, f: c.key.split("."), v }], `${SECTIONS[sec].title}: ${c.label}${what ? " (" + what + ")" : ""}${isTime ? " now " + mmssH(v) + (parseTimeInput(inp.value).how === "seconds" ? ", read as seconds" : "") : ""}`, { quiet: !isTime });
