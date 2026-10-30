@@ -76,11 +76,16 @@ async function firestoreStore({ key, config, emulator }) {
     ev.emit("meta", v || null);
   },
     (e) => status("error: " + e.code));
-  let serverSeen = false;
+  // serverSeen: the plan has come from the server at least once. connected: it's in step with the server right now.
+  let serverSeen = false, connected = false;
+  const online = () => connected && navigator.onLine !== false;
   F.onSnapshot(dataCol, { includeMetadataChanges: true }, (snap) => {
     const changed = [];
     const fromServer = !snap.metadata.fromCache && !serverSeen;
     if (!snap.metadata.fromCache) serverSeen = true;
+    const was = connected;
+    connected = !snap.metadata.fromCache;
+    if (was !== connected) ev.emit("connection", connected);
     for (const ch of snap.docChanges()) {
       changed.push(ch.doc.id);
       if (ch.type === "removed") delete plan.sections[ch.doc.id];
@@ -97,7 +102,7 @@ async function firestoreStore({ key, config, emulator }) {
     if (!ops.length) return null;
     // an hourly copy of the whole plan, taken before the first change of the hour (its own write, so a failed copy
     // never blocks the change itself)
-    if (serverSeen && lastSnap !== null && Date.now() - lastSnap > SNAP_EVERY && !extra?.noSnapshot) {
+    if (serverSeen && online() && lastSnap !== null && Date.now() - lastSnap > SNAP_EVERY && !extra?.noSnapshot) {
       lastSnap = Date.now();
       const sb = F.writeBatch(db);
       sb.set(F.doc(snapCol), { at: F.serverTimestamp(), who: me.name || "Someone", label: "Hourly copy", sections: clone(plan.sections) });
@@ -132,17 +137,33 @@ async function firestoreStore({ key, config, emulator }) {
   }
 
   async function replaceAll(sections, label, who) {
-    // a fresh copy of what's there now, then every section rewritten
-    const b = F.writeBatch(db);
-    b.set(F.doc(snapCol), { at: F.serverTimestamp(), who: who || me.name || "Someone", label: "Before: " + label, sections: clone(plan.sections) });
-    for (const name of new Set(Object.keys(plan.sections).concat(Object.keys(sections)))) {
-      b.set(F.doc(dataCol, name), { items: clone(sections[name] || {}) });
-    }
-    b.set(F.doc(histCol), { at: F.serverTimestamp(), who: who || me.name || "Someone", client: clientId, label, ops: [] });
-    b.set(planRef, { updated: F.serverTimestamp(), lastSnap: F.serverTimestamp(), schema: 1 }, { merge: true });
+    // Only ever online, in one transaction: the "Before" copy is what the server holds at that moment (not this
+    // browser's copy, which may be behind), and if anything changes in between, the transaction starts again.
+    // A transaction can't be saved for later, so a copy loaded offline can never land on top of other people's work.
+    if (!online()) throw Object.assign(new Error("You're offline. Loading a whole copy needs a connection."), { code: "offline" });
     pending++; status("saving");
-    try { await b.commit(); pending--; if (!pending) status("saved"); }
-    catch (e) { pending--; status("error: " + (e.code || e.message)); throw e; }
+    try {
+      const listed = await F.getDocsFromServer(dataCol);
+      const names = [...new Set(Object.keys(plan.sections).concat(Object.keys(sections), listed.docs.map((d) => d.id)))];
+      await F.runTransaction(db, async (tx) => {
+        const before = {};
+        for (const name of names) {
+          const d = await tx.get(F.doc(dataCol, name));
+          if (d.exists()) before[name] = (d.data() || {}).items || {};
+        }
+        const by = who || me.name || "Someone";
+        tx.set(F.doc(snapCol), { at: F.serverTimestamp(), who: by, label: "Before: " + label, sections: before });
+        for (const name of names) tx.set(F.doc(dataCol, name), { items: clone(sections[name] || {}) });
+        tx.set(F.doc(histCol), { at: F.serverTimestamp(), who: by, client: clientId, label, ops: [] });
+        tx.set(planRef, { updated: F.serverTimestamp(), lastSnap: F.serverTimestamp(), schema: 1 }, { merge: true });
+      });
+      pending--; if (!pending) status("saved");
+    } catch (e) {
+      pending--;
+      status(online() ? "error: " + (e.code || e.message) : "offline");
+      if (!online() && e.code !== "offline") throw Object.assign(new Error("You're offline. Loading a whole copy needs a connection."), { code: "offline" });
+      throw e;
+    }
   }
 
   return {
@@ -152,6 +173,7 @@ async function firestoreStore({ key, config, emulator }) {
     setName(n) { me.name = n; },
     commit,
     replaceAll,
+    online,
     watchHistory(limit, fn) {
       return F.onSnapshot(F.query(histCol, F.orderBy("at", "desc"), F.limit(limit || 80)), (snap) => {
         fn(snap.docs.map((d) => Object.assign({ id: d.id }, d.data({ serverTimestamps: "estimate" }), { at: (d.data({ serverTimestamps: "estimate" }).at || { toMillis: () => Date.now() }).toMillis() })));
@@ -200,6 +222,7 @@ function localStore({ key }) {
   return {
     mode: "local",
     on: ev.on,
+    online: () => true,
     plan: () => plan,
     setName(n) { me.name = n; },
     async commit(ops, label, extra) {

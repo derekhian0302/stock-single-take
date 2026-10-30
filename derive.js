@@ -132,20 +132,37 @@
   const words = (re, s) => { const out = []; let m; const r = new RegExp(re.source, "g"); while ((m = r.exec(s))) out.push(m[1]); return out; };
   const MARK_CODE = /\b([A-Z]\d)\b/;
 
-  function rowsOf(plan, name) {
+  const dict = (entries) => { const d = Object.create(null); for (const [k, v] of entries || []) d[k] = v; return d; };
+  // rows in order; a row with no order number is a leftover piece of a deleted row (an edit saved offline after someone
+  // else deleted the row), so it's left out and listed in the warnings
+  function rowsOf(plan, name, leftovers) {
     const sec = (plan && plan.sections && plan.sections[name]) || {};
-    return Object.keys(sec).filter((id) => sec[id] && typeof sec[id] === "object")
-      .map((id) => Object.assign({ id }, sec[id]))
-      .sort((a, b) => ((a.o == null ? 1e15 : a.o) - (b.o == null ? 1e15 : b.o)) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const out = [];
+    for (const id of Object.keys(sec)) {
+      const r = sec[id];
+      if (!r || typeof r !== "object" || Array.isArray(r)) continue;
+      const o = pyFloat(r.o);   // a number, or a number written as text in a hand-edited file
+      if (o === null) { if (leftovers) leftovers.push([name, id]); continue; }
+      out.push(Object.assign({ id }, r, { o }));
+    }
+    return out.sort((a, b) => (a.o - b.o) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   }
 
   // ------------------------------------------------------------------ the derivation
   function derive(plan) {
     const W = [];
-    const warn = (sec, id, text) => W.push({ sec, id, text });
-    const set = {};
+    const warn = (sec, id, text, kind) => W.push(kind ? { sec, id, text, kind } : { sec, id, text });
+    // pieces of rows someone deleted, brought back by an edit that was saved offline: not used, listed so they can go
+    const LEFT = [], TITLE = { runsheet: "Run sheet", openitems: "Open items", texts: "Wording", fixtures: "Counters and furniture",
+      features: "Doors, windows, glass", seats: "Stools, chairs, patio tables", points: "Outlets, noise, trip hazards", labels: "Map labels" };
+    for (const name of Object.keys((plan && plan.sections) || {})) rowsOf(plan, name, LEFT);
+    for (const [name, id] of LEFT) {
+      const title = TITLE[name] || name.charAt(0).toUpperCase() + name.slice(1);
+      warn(name, id, `${title}: a leftover piece of a row someone deleted (an edit to it was saved after the delete). It isn't used; delete it.`, "leftover");
+    }
+    const set = Object.create(null);
     for (const r of rowsOf(plan, "settings")) set[r.id] = r.value;
-    const tx = {};
+    const tx = Object.create(null);
     for (const r of rowsOf(plan, "texts")) tx[r.id] = txt(r.text);
     const sNum = (k, d) => { const v = pyFloat(set[k]); return v === null ? d : v; };
     const sStr = (k, d) => (txt(set[k]) || d);
@@ -158,7 +175,7 @@
       resets: "Resets", preset: "Preset", signals: "Signals", measure: "Measure", openitems: "Open items" };
 
     // ---- lenses and model settings
-    const LENSES = {};
+    const LENSES = Object.create(null);
     for (const part of txt(set.lenses || "18 mm=90; 24 mm=74; 35 mm=54").split(";")) {
       const m = /^\s*(.+?)\s*=\s*(\d+(?:\.\d+)?)\s*$/.exec(part);
       if (m) LENSES[m[1]] = Number(m[2]);
@@ -171,7 +188,7 @@
     const TALENT_SET = txt(set.talent), CAMERA_SET = txt(set.camera);
 
     // ---- marks, things on a counter, places off the plan
-    const marks = [], draftMarks = [], off = [], props = [], find = {}, seen = {};
+    const marks = [], draftMarks = [], off = [], props = [], find = Object.create(null), seen = Object.create(null);
     rowsOf(plan, "marks").forEach((r, i) => {
       const n = i + 1;
       const code = txt(r.code), name = txt(r.name), kindRaw = txt(r.kind), kind = kindRaw.toLowerCase();
@@ -191,11 +208,11 @@
       else if (k) marks.push([code, name, x, y, k, status, note, r.id]);
       else warn("Marks", r.id, `Marks row ${n} (${code}): unknown kind '${kindRaw}'`);
     });
-    const MARK_XY = {};
+    const MARK_XY = Object.create(null);
     for (const m of marks.concat(draftMarks)) MARK_XY[m[0]] = [m[2], m[3]];
-    const PROP_XY = {};
+    const PROP_XY = Object.create(null);
     for (const p of props) PROP_XY[p[0]] = [p[2], p[3]];
-    const markId = {};
+    const markId = Object.create(null);
     for (const m of marks.concat(draftMarks)) markId[m[0]] = m[7];
 
     // ---- people
@@ -211,18 +228,18 @@
         tape: txt(r.tape), speed: pyFloat(r.speed), cont: parseTime(r.cont), checked: yes(r.checked), runcol: txt(r.runcol),
         marks: txt(r.marks), goesby: txt(r.goesby).toLowerCase(), named: txt(r.named) === "" ? true : yes(r.named), withcam: yes(r.withcam) });
     });
-    const P = Object.fromEntries(people.map((p) => [p.code, p]));
+    const P = dict(people.map((p) => [p.code, p]));
     const TALENT = TALENT_SET || ((people.find((p) => p.color === "talent") || {}).code || "");
     const CAMERA = CAMERA_SET || ((people.find((p) => p.color === "camera") || {}).code || "");
-    const NAMES = Object.fromEntries(people.map((p) => [p.code, p.who]));
-    const OFF_PLAN = {};
+    const NAMES = dict(people.map((p) => [p.code, p.who]));
+    const OFF_PLAN = Object.create(null);
     for (const p of people) {
       const m = /\b([HVX]\d)\b/.exec(p.during);
       if (m && p.code !== TALENT && p.code !== CAMERA && p.cont === null) OFF_PLAN[p.code] = [m[1], p.during];
     }
 
     // ---- beats
-    const beatsAll = [], beatTimes = [], beatSeen = new Set(), insideSet = new Set(), pills = {};
+    const beatsAll = [], beatTimes = [], beatSeen = new Set(), insideSet = new Set(), pills = Object.create(null);
     rowsOf(plan, "beats").forEach((r, i) => {
       const n = i + 1, b = txt(r.code);
       if (beatSeen.has(b)) { warn("Beats", r.id, `Beats row ${n}: beat '${b}' is already used; this row is skipped`); return; }
@@ -238,13 +255,18 @@
       if (yes(r.inside)) insideSet.add(b);
       if (txt(r.pill)) pills[b] = txt(r.pill);
     });
-    const BEAT_INDEX = Object.fromEntries(beatTimes.map((b) => [b[0], b]));
+    const BEAT_INDEX = dict(beatTimes.map((b) => [b[0], b]));
     const timerBeat = txt(set.timerBeat), cutBeat = txt(set.cutBeat), endBeat = txt(set.endBeat);
     for (const need of [timerBeat, endBeat]) {
       if (need && !BEAT_INDEX[need]) warn("Beats", null, `Beats: ${need} needs a start and an end (the timer and the end of the take come from it)`);
     }
     const TIMER_START = BEAT_INDEX[timerBeat] ? BEAT_INDEX[timerBeat][1] : 0;
-    const TAKE_END = BEAT_INDEX[endBeat] ? BEAT_INDEX[endBeat][2] : Math.max(60, ...beatTimes.map((b) => b[2]));
+    let TAKE_END = BEAT_INDEX[endBeat] ? BEAT_INDEX[endBeat][2] : Math.max(60, ...beatTimes.map((b) => b[2]));
+    if (TAKE_END > 7200) {
+      const endRow = BEAT_INDEX[endBeat] || beatTimes.reduce((m, bt) => (!m || bt[2] > m[2] ? bt : m), null);
+      warn("Beats", endRow ? endRow[4] : null, `Beats: the take would end at ${mmss(TAKE_END)}; check the beat times (worked out as if it ends at 2:00:00)`);
+      TAKE_END = 7200;
+    }
     const CUT_POINT = BEAT_INDEX[cutBeat] ? BEAT_INDEX[cutBeat][1] : TAKE_END;
     const INSIDE = beatTimes.filter((b) => insideSet.has(b[0])).map((b) => b[0]);
     const timerFull = () => { const r = pyRound(TIMER_LEN, 0); return Math.floor(r / 60) + ":" + pad2(r % 60); };
@@ -261,7 +283,7 @@
     }
 
     // ---- moves
-    const RAW = {}, WATCH = {}, KEYS = {};
+    const RAW = Object.create(null), WATCH = Object.create(null), KEYS = Object.create(null);
     const knownLooks = new Set(Object.keys(MARK_XY).concat(props.map((p) => p[0]), people.map((p) => p.code)));
     rowsOf(plan, "moves").forEach((r, i) => {
       const n = i + 1, who = txt(r.who), T = parseTime(r.t), where = txt(r.at);
@@ -293,15 +315,25 @@
       if (w) WATCH[who + "@" + T] = w;
     });
     for (const who of Object.keys(RAW)) {
+      // both sorts are stable and RAW and KEYS were filled in the same order, so they stay matched
       RAW[who].sort((a, b) => a[0] - b[0]);
       KEYS[who].sort((a, b) => a.t - b.t);
-      const times = RAW[who].map((k) => k[0]);
-      if (new Set(times).size !== times.length) warn("Moves", null, `Moves: ${who} has two rows at the same take time`);
+      // two keyframes at the same take time (two people dragging at once): the board uses the later row, on every
+      // screen alike, and the other one is listed so someone can delete it
+      const ks = KEYS[who], raw = RAW[who], keepK = [], keepR = [];
+      for (let i = 0; i < ks.length; i++) {
+        if (i + 1 < ks.length && ks[i + 1].t === ks[i].t) {
+          warn("Moves", ks[i].id, `Moves: ${NAMES[who] || who} has two keyframes at the same take time (${mmss(ks[i].t)}). The board uses the one at ${ks[i + 1].at}; delete this one (at ${ks[i].at}) unless it's the right one`);
+          continue;
+        }
+        keepK.push(ks[i]); keepR.push(raw[i]);
+      }
+      KEYS[who] = keepK; RAW[who] = keepR;
     }
     if (!RAW[CAMERA] || !RAW[TALENT]) warn("Moves", null, `Moves: ${NAMES[TALENT] || TALENT} (${TALENT}) and the camera (${CAMERA}) both need rows`);
 
     // ---- run sheet
-    const SUMMARY = new Map(), RUN_NOTES = {};
+    const SUMMARY = new Map(), RUN_NOTES = Object.create(null);
     rowsOf(plan, "runsheet").forEach((r, i) => {
       const b = txt(r.beat);
       checkStatus("Run sheet", r.id, i + 1, r.status);
@@ -428,7 +460,7 @@
       }
       return out;
     }
-    const TRACKS = {};
+    const TRACKS = Object.create(null);
     for (const who of Object.keys(RAW)) TRACKS[who] = expand(who, RAW[who]);
     // people in the order of the People rows
     const onMapOrder = people.map((p) => p.code).filter((c) => TRACKS[c] && TRACKS[c].length);
@@ -542,7 +574,7 @@
     }
     const bodyDeg = (c, p) => DEG * Math.atan2(BODY_HALF, Math.max(hypot(p[0] - c[0], p[1] - c[1]), 0.3));
     function swapWindows() {
-      const res = {};
+      const res = Object.create(null);
       for (const sw of SWAPS) {
         let tFrom = Math.max(sw.useful[0], TIMER_START), tTo = Math.min(sw.useful[1], TAKE_END);
         const thing = PROP_XY[sw.target] ? [PROP_XY[sw.target]] : [];
@@ -576,12 +608,12 @@
     const WINDOWS = swapWindows();
 
     // ---- labels and mark sets
-    const LABEL = {};
+    const LABEL = Object.create(null);
     for (const m of marks) LABEL[m[0]] = m[1];
     for (const m of draftMarks) LABEL[m[0]] = m[1];
     for (const o of off) LABEL[o[0]] = o[1];
     const allMarks = marks.concat(draftMarks);
-    const MARKSET = {};
+    const MARKSET = Object.create(null);
     for (const p of people) {
       if (!p.marks) continue;
       const spec = parseList(p.marks).map((s) => s.toLowerCase());
@@ -618,44 +650,95 @@
     //   first THING LENS    first moment a thing on a counter is in frame at that lens
     const NUM = (function () {
       const dist = (a, b) => hypot(a[0] - b[0], a[1] - b[1]);
-      const out = {};
+      const out = Object.create(null);
       const f1 = (v) => `${fmt(v, 1)} m`;
+      const lc = (v) => String(v == null ? "" : v).toLowerCase();
+      // codes match whatever their case: exact first, then ignoring case
+      const ci = (obj, k) => {
+        if (k == null || k === "") return undefined;
+        if (obj[k] !== undefined) return obj[k];
+        const l = lc(k);
+        for (const key of Object.keys(obj)) if (key.toLowerCase() === l) return obj[key];
+        return undefined;
+      };
       const refT = (ref) => {
-        if (ref === "cut") return CUT_POINT;
-        if (ref === "timer") return TIMER_START;
-        if (ref === "timerend") return TIMER_START + TIMER_LEN;
-        if (ref === "end") return TAKE_END;
-        if (BEAT_INDEX[ref]) return BEAT_INDEX[ref][1];
-        return null;
+        const r = lc(ref);
+        if (r === "cut") return CUT_POINT;
+        if (r === "timer") return TIMER_START;
+        if (r === "timerend") return TIMER_START + TIMER_LEN;
+        if (r === "end") return TAKE_END;
+        const b = ci(BEAT_INDEX, ref);
+        return b ? b[1] : null;
       };
-      const who = (c) => TRACKS[c === "talent" ? TALENT : c === "camera" ? CAMERA : c] || [];
-      const xyOf = (c) => MARK_XY[c] || PROP_XY[c] || null;
-      const between = (a, b, sp) => {
-        const ta = who(a), tb = who(b), [s0, s1] = parseSpan(sp, [0, 0]), o = [];
-        if (!ta.length || !tb.length) return o;
-        for (let T = s0; T <= s1 + 1e-9; T += 0.5) o.push(dist(posAt(ta, T), posAt(tb, T)));
-        return o;
+      const who = (c) => { const l = lc(c); return ci(TRACKS, l === "talent" ? TALENT : l === "camera" ? CAMERA : c) || null; };
+      const xyOf = (c) => ci(MARK_XY, c) || ci(PROP_XY, c) || null;
+      // an offset after a take or timer reference: "+8", "+ 8", "+8s", "-0:25", "8"; nothing = 0; null if unreadable
+      const parseOff = (v) => {
+        const s = String(v || "").replace(/\s+/g, "").replace(/\u2212/g, "-");
+        if (!s) return 0;
+        const m = /^([+-]?)(.+?)(?:s|sec|secs|seconds?)?$/i.exec(s);
+        const t = m ? parseTime(m[2]) : null;
+        if (t === null || t < 0) return null;
+        return m[1] === "-" ? -t : t;
       };
-      for (const line of txt(set.tokens).split("\n")) {
-        const m = /^\s*([a-z0-9_]+)\s*=\s*(\w+)\s*(.*?)\s*$/.exec(line);
-        if (!m) continue;
-        const [, name, kind, rest] = m, a = rest.split(/\s+/).filter(Boolean);
+      // a span: "0:00-0:25.5", "0 - 25.5", "29 to 37.5", or a beat code (its start to its end); null if unreadable
+      const parseSpanT = (v) => {
+        const s = String(v || "").trim().replace(/\u2212/g, "-");
+        const b = ci(BEAT_INDEX, s);
+        if (b) return [b[1], b[2]];
+        const m = /^(.+?)\s*(?:\bto\b|\u2013|\u2014)\s*(.+)$/i.exec(s) || /^(-?[\d:.]+)\s*-\s*(-?[\d:.]+)$/.exec(s);
+        if (!m) return null;
+        // either side can be a beat code too: from the start of the first to the end of the second
+        const side = (x, i) => { x = x.trim(); const t = parseTime(x); if (t !== null) return t; const bb = ci(BEAT_INDEX, x); return bb ? bb[i] : null; };
+        const t0 = side(m[1], 1), t1 = side(m[2], 2);
+        return t0 === null || t1 === null || t1 < t0 ? null : [t0, t1];
+      };
+      const KINDS = "take, timer, length, range, closest, dist or first";
+      const fromSwaps = new Set();
+      for (const sw of SWAPS) { fromSwaps.add(sw.code.toLowerCase() + "_win"); fromSwaps.add(sw.code.toLowerCase() + "_need"); }
+      // one token per line; anything after a # is a note. Lines that ran together are split again where "name =" starts.
+      const lines = [];
+      txt(set.tokens).split(/\r?\n/).forEach((raw, i) => {
+        const body = raw.replace(/(^|\s)(#|\/\/).*$/, "").trim();
+        if (body) for (const part of body.split(/\s+(?=[A-Za-z0-9_]+\s*=)/)) if (part.trim()) lines.push([i + 1, part.trim()]);
+      });
+      for (const [lineNo, line] of lines) {
+        const bad = (why) => warn("Settings", "tokens", `Settings, tokens line ${lineNo} ("${line.slice(0, 60)}"): ${why}`);
+        const m = /^([A-Za-z0-9_]+)\s*=\s*([A-Za-z]+)\s*(.*?)$/.exec(line);
+        if (!m) { bad("should read name = kind ..., for example 'cut_at = take cut'"); continue; }
+        const name = m[1].toLowerCase(), kind = m[2].toLowerCase(), a = m[3].split(/\s+/).filter(Boolean);
+        if (fromSwaps.has(name)) { bad(`{${name}} is already filled from the Swaps tab; use another name`); continue; }
+        if (out[name] !== undefined) { bad(`{${name}} is defined twice; this line is skipped`); continue; }
         let v = "?";
         if (kind === "take" || kind === "timer") {
-          const t = refT(a[0]), off = a[1] ? Number(a[1]) : 0;
-          if (t !== null && isFinite(off)) v = kind === "take" ? mmss(t + off) : timerAt(t + off);
+          const t = refT(a[0]), off = parseOff(a.slice(1).join(""));
+          if (t === null) bad(`'${a[0] || ""}' isn't cut, timer, timerend, end or a beat code`);
+          else if (off === null) bad(`the offset '${a.slice(1).join(" ")}' should be seconds or m:ss, like +8 or -0:25`);
+          else v = kind === "take" ? mmss(t + off) : timerAt(t + off);
         } else if (kind === "length") {
-          if (BEAT_INDEX[a[0]]) v = String(Math.trunc(pyRound(BEAT_INDEX[a[0]][2] - BEAT_INDEX[a[0]][1], 0)));
+          const b = ci(BEAT_INDEX, a[0]);
+          if (b) v = String(Math.trunc(pyRound(b[2] - b[1], 0)));
+          else bad(`'${a[0] || ""}' isn't a beat code`);
         } else if (kind === "range" || kind === "closest") {
-          const d = between(a[0], a[1], a[2]);
-          if (d.length) v = kind === "range" ? `${fmt(Math.min(...d), 1)} to ${fmt(Math.max(...d), 1)} m` : f1(Math.min(...d));
+          const ta = who(a[0]), tb = who(a[1]), span = parseSpanT(a.slice(2).join(" "));
+          if (!ta || !tb) bad(`'${!ta ? a[0] || "" : a[1] || ""}' should be talent, camera or a person's code (with moves)`);
+          else if (!span) bad(`the span '${a.slice(2).join(" ")}' should be two times, like 0:00-0:25, or a beat code`);
+          else {
+            const s0 = Math.max(span[0], -3600), s1 = Math.min(span[1], 7300), d = [];
+            for (let T = s0; T <= s1 + 1e-9; T += 0.5) d.push(dist(posAt(ta, T), posAt(tb, T)));
+            if (d.length) v = kind === "range" ? `${fmt(Math.min(...d), 1)} to ${fmt(Math.max(...d), 1)} m` : f1(Math.min(...d));
+          }
         } else if (kind === "dist") {
           const p = xyOf(a[0]), q = xyOf(a[1]);
           if (p && q) v = f1(dist(p, q));
+          else bad(`'${!p ? a[0] || "" : a[1] || ""}' isn't a mark or a thing on the Marks tab`);
         } else if (kind === "first") {
-          const p = PROP_XY[a[0]] || MARK_XY[a[0]], lens = a.slice(1).join(" ");
-          if (p) { const t = firstInFrame(p, LENSES[lens] !== undefined ? LENSES[lens] : LENSES[LENS]); v = t !== null ? mmss(t) : "never"; }
-        }
+          const p = ci(PROP_XY, a[0]) || ci(MARK_XY, a[0]), lens = a.slice(1).join(" ");
+          const L = lens ? ci(LENSES, lens) : LENSES[LENS];
+          if (!p) bad(`'${a[0] || ""}' isn't a mark or a thing on the Marks tab`);
+          else if (L === undefined) bad(`'${lens}' isn't one of the lenses (${Object.keys(LENSES).join(", ")})`);
+          else { const t = firstInFrame(p, L); v = t !== null ? mmss(t) : "never"; }
+        } else bad(`'${m[2]}' isn't a kind of token; use ${KINDS}`);
         out[name] = v;
       }
       for (const sw of SWAPS) {
@@ -665,19 +748,22 @@
       return out;
     })();
     const FILL_KEYS = Object.keys(NUM);
+    const tokenRe = /\{([A-Za-z0-9_]+)\}/g;
+    // {token} is filled whatever its case; {timer} is the on-camera timer at T when there is one
     function fill(text, T) {
       if (!text) return "";
-      let out = String(text);
-      if (T !== undefined && T !== null && out.includes("{timer}")) out = out.split("{timer}").join(timerAt(T));
-      for (const key of FILL_KEYS) out = out.split("{" + key + "}").join(NUM[key]);
-      return out;
+      const hasT = T !== undefined && T !== null;
+      return String(text).replace(tokenRe, (whole, k) => {
+        const key = k.toLowerCase();
+        if (key === "timer" && hasT) return timerAt(T);
+        return NUM[key] !== undefined ? NUM[key] : whole;
+      });
     }
-    const tokenRe = /\{([a-z0-9_]+)\}/g;
     function unknownTokens(text) {
       const out = []; let m;
       const known = new Set(FILL_KEYS.concat(["timer"]));
       const r = new RegExp(tokenRe.source, "g");
-      while ((m = r.exec(String(text || "")))) if (!known.has(m[1])) out.push(m[1]);
+      while ((m = r.exec(String(text || "")))) if (!known.has(m[1].toLowerCase())) out.push(m[1]);
       return out;
     }
     const fillTx = (key, extra) => {
@@ -699,7 +785,7 @@
         return CARD_LINES.filter((c) => c[0] === person).map((c) => ["", c[1], "", "", fill(c[2]), fill(c[3]), fill(c[4])]);
       }
       const tr = RAW[person].slice().sort((a, b) => a[0] - b[0]);
-      const byBeat = {};
+      const byBeat = Object.create(null);
       for (const k of tr) { const b = BEAT_INDEX[k[4]] ? k[4] : beatAt(k[0]); (byBeat[b] = byBeat[b] || []).push(k); }
       const rows = [];
       for (const [b, , , name] of beatTimes) {
@@ -801,7 +887,8 @@
         if (!TRACKS[person] || !TRACKS[person].length) continue;
         for (const [beat, t] of beats) {
           if (!BEAT_INDEX[beat]) { out.push([person, beat, "beat not on the Beats tab"]); continue; }
-          const [, t0, t1] = BEAT_INDEX[beat];
+          const [, b0, b1] = BEAT_INDEX[beat];
+          const t0 = Math.max(b0, -3600), t1 = Math.min(b1, TAKE_END);
           const reached = new Set();
           for (let T = t0; T <= t1; T += 0.5) {
             if (present(person, T)) { const m = markNear(person, posAt(TRACKS[person], T), 0.7); if (m) reached.add(m); }
@@ -832,7 +919,7 @@
           const a = pts[i], b = pts[i + 1];
           if (BARRIERS.some(([w0, w1]) => segCross(a, b, w0, w1))) wall = true;
           const L = hypot(b[0] - a[0], b[1] - a[1]);
-          const n = Math.max(1, Math.trunc(L / 0.1));
+          const n = Math.max(1, Math.min(Math.trunc(L / 0.1), 3000));   // every 10 cm (a route over 300 m is a typo)
           for (let j = 0; j <= n; j++) {
             const d = worst(a[0] + (b[0] - a[0]) * j / n, a[1] + (b[1] - a[1]) * j / n);
             if (d[0] < w[0]) w = d;
@@ -1049,20 +1136,21 @@
           const vals = k === "cells" && v && typeof v === "object" ? Object.values(v) : [v];
           for (const val of vals) {
             if (typeof val !== "string" || !val.includes("{")) continue;
-            const unknown = unknownTokens(val).filter((t) => !(name === "texts" && ["privacy", "a", "b", "name", "need", "handling", "txt", "exc", "apart", "list"].includes(t)));
+            const unknown = unknownTokens(val).filter((t) => !(name === "texts" && ["privacy", "a", "b", "name", "need", "handling", "txt", "exc", "apart", "list"].includes(t.toLowerCase())));
             for (const t of unknown) warn(TAB[name] || name, r.id, `${TAB[name] || name}: unknown token '{${t}}' (the Tokens list shows the ones the plan fills)`);
           }
         }
       }
     }
-    for (const m of mismatches()) warn("Run sheet", null, `Run sheet ${m[1]} (${m[0]}): ${m[2]}`);
+    const MISMATCHES = mismatches();
+    for (const m of MISMATCHES) warn("Run sheet", null, `Run sheet ${m[1]} (${m[0]}): ${m[2]}`);
 
     const checks = {
       sweep: Object.fromEntries(Object.keys(LENSES).map((l) => [l, sweep(LENSES[l], "in")])),
       edge: Object.fromEntries(Object.keys(LENSES).map((l) => [l, sweep(LENSES[l], "edge")])),
       talentOut: Object.fromEntries(Object.keys(LENSES).map((l) => [l, talentOut(LENSES[l])])),
       crowding: crowding(), speeds: speeds(), solid: solidHits(), routes: routeClearance(), clearance: clearance(),
-      mismatches: mismatches(),
+      mismatches: MISMATCHES,
     };
     const model = { TRACKS, RAW, MARK_XY, PROP_XY, posAt, headingAt, present, beatAt, timerAt, mmss, fill, markNear, LABEL, NAMES };
     return { data, warnings: W, checks, model };

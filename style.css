@@ -96,7 +96,6 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--panel); }
 .mapwrap { background: var(--floor); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); display: grid; place-items: center; }
 #map { width: 100%; height: auto; max-height: 76vh; display: block; touch-action: manipulation; }
-.editing #map { touch-action: none; }
 
 /* svg */
 .a-room { fill: var(--floor); }
@@ -241,6 +240,8 @@ ul.tight { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; font-si
 .here { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12.5px; color: var(--muted); }
 .here .who { border: 1px solid var(--rule); border-radius: 999px; padding: 1px 8px; background: var(--chip); color: var(--ink); font-weight: 600; }
 .tabs .count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--warn); color: #fff; font-size: 12px; line-height: 18px; text-align: center; margin-left: 4px; font-family: var(--font-body); }
+.derive-err { background: color-mix(in srgb, var(--warn) 12%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--rule)); border-radius: 10px; padding: 8px 12px; font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.derive-err .btnrow { display: inline-flex; gap: 6px; margin: 0; }
 .edit-hint { background: color-mix(in srgb, var(--sel) 22%, var(--panel)); border: 1px solid color-mix(in srgb, var(--sel) 60%, var(--rule)); border-radius: 10px; padding: 8px 12px; font-size: 13.5px; display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
 .mk-toggle { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; }
 .wide { display: grid; gap: 12px; min-width: 0; }
@@ -250,6 +251,7 @@ ul.tight { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; font-si
 .editing #map .person { cursor: grab; }
 .editing #map .person.dragging { cursor: grabbing; }
 .person .handle { fill: var(--sel); stroke: var(--ink); stroke-width: 3; cursor: crosshair; }
+.person .handle-hit { fill: transparent; cursor: crosshair; }
 .snap-ring { fill: none; stroke: var(--sel); stroke-width: 6; stroke-dasharray: 10 6; pointer-events: none; }
 .ghost-line { stroke: var(--sel); stroke-width: 4; stroke-dasharray: 8 6; pointer-events: none; }
 .marks-movable .mk, .marks-movable .prop { cursor: move; opacity: 1; }
@@ -329,7 +331,7 @@ ul.tight { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 4px; font-si
 .modal { position: fixed; inset: 0; background: rgba(10, 12, 14, 0.45); display: grid; place-items: center; z-index: 40; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .modal-card { background: var(--panel); border: 1px solid var(--rule); border-radius: 14px; padding: 18px 20px; width: min(460px, 100%); box-shadow: var(--shadow); }
 .modal-card h2 { font-family: var(--font-display); margin: 0 0 8px; }
-.toast { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--panel); border-radius: 10px; padding: 9px 14px; font-size: 14px; z-index: 45; display: flex; gap: 12px; align-items: center; max-width: calc(100vw - 32px); box-shadow: var(--shadow); }
+.toast { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--panel); border-radius: 10px; padding: 9px 14px; font-size: 14px; z-index: 45; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; box-shadow: var(--shadow); }
 .toast button { background: transparent; color: var(--sel); border: 1px solid currentColor; border-radius: 6px; padding: 2px 8px; cursor: pointer; font: inherit; font-weight: 600; }
 
 /* print */

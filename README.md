@@ -11,6 +11,8 @@ change shows up for everyone within a second or two.
   database rules only open the one plan whose key matches. No key, no plan.
 - Every change is a small field edit with the editor's name on it, so two people working at once don't overwrite each
   other. The History tab lists every change and can undo any of them; an hourly copy of the whole plan can be restored.
+- Edits made offline are kept on the device and sync when it reconnects. Restoring a copy or loading a file replaces the
+  whole plan, so it only runs online, in one transaction that first saves what the database holds as a copy.
 - The board (positions over time, the camera's view, swap windows, cards, checks) is worked out in the browser from the
   plan's rows (`derive.js`), the same rules as the Python build it replaced.
 
