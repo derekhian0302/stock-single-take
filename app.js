@@ -178,6 +178,11 @@ function makeApp(store) {
     const m = el("marker", { id: "arr-" + c, viewBox: "0 0 10 10", refX: "7", refY: "5", markerWidth: "4", markerHeight: "4", orient: "auto-start-reverse" }, defs);
     el("path", { d: "M0,0 L10,5 L0,10 z", style: "fill:var(--" + c + ")" }, m);
   });
+  // hatching for areas drawn hatched on a floor plan (one each way), 20 cm apart
+  for (const [id, d] of [["hatch", "M-5,5 L5,-5 M0,20 L20,0 M15,25 L25,15"], ["hatch2", "M-5,15 L5,25 M0,0 L20,20 M15,-5 L25,5"]]) {
+    const pat = el("pattern", { id: "pat-" + id, patternUnits: "userSpaceOnUse", width: 20, height: 20 }, defs);
+    el("path", { d, class: "hatch-line" }, pat);
+  }
   const wedge = el("path", { class: "wedge" }, gWedge);
   const pts = (poly) => poly.map((p) => (p[0] * S).toFixed(1) + "," + (p[1] * S).toFixed(1)).join(" ");
   const inBox = (x, y, box) => x >= box[0] && x <= box[0] + box[2] && y >= box[1] && y <= box[1] + box[3];
@@ -187,13 +192,13 @@ function makeApp(store) {
     gMarks.innerHTML = "";
     for (const a of DATA.areas) el("polygon", { points: pts(a.poly), class: "a-" + (a.style || "room") }, gBase);
     const hz = DATA.hot; el("rect", { x: hz[0] * S, y: hz[1] * S, width: hz[2] * S, height: hz[3] * S, class: "hot" }, gBase);
-    const order = ["counter", "tall", "island", "appliance", "cooktop", "sink", "furniture", "rug", "item"];
+    const order = ["counter", "tall", "island", "bar", "appliance", "oven", "cooktop", "sink", "table", "furniture", "wall", "rug", "item"];
     const kinds = order.concat(DATA.fixtures.map((f) => f.kind).filter((k2) => !order.includes(k2)));
     for (const kind of kinds) for (const f of DATA.fixtures.filter((f2) => f2.kind === kind)) {
       const r = el("rect", { x: f.x * S, y: f.y * S, width: f.w * S, height: f.h * S, class: "f-" + kind, rx: kind === "sink" ? 6 : 0 }, gBase);
       const tt = el("title", {}, r); tt.textContent = f.label;
     }
-    for (const [x, y] of DATA.chairs) el("circle", { cx: x * S, cy: y * S, r: 18, class: "f-appliance" }, gBase);
+    for (const [x, y] of DATA.chairs) el("rect", { x: x * S - 11, y: y * S - 11, width: 22, height: 22, rx: 4, class: "f-chair" }, gBase);
     for (const [x, y, moved] of DATA.bistro) { const c = el("circle", { cx: x * S, cy: y * S, r: 32, class: "f-appliance" }, gBase); if (moved) { c.setAttribute("style", "fill:none;stroke-dasharray:5 4"); const tt = el("title", {}, c); tt.textContent = "Moved clear for the take (preset)"; } }
     if (DATA.outline.length > 1) el("polygon", { points: pts(DATA.outline), class: "wall" }, gBase);
     for (const f of DATA.features) {
@@ -201,8 +206,14 @@ function makeApp(store) {
       if (f.kind === "opening") el("line", Object.assign({ class: "glass-gap" }, a), gBase);
       else if (f.kind === "window" || f.kind === "glass") { el("line", Object.assign({ class: "glass-gap" }, a), gBase); el("line", Object.assign({ class: "glass" }, a), gBase); }
       else if (f.kind === "door") { el("line", Object.assign({ class: "glass-gap" }, a), gBase); el("line", Object.assign({ class: "door" }, a), gBase); }
+      else if (f.kind === "line") el("line", Object.assign({ class: "edge-line" }, a), gBase);
+      else if (f.kind === "swing") {
+        // a door's swing: hinge at x1, y1; the arc runs a quarter turn clockwise (as drawn) from x2, y2
+        const dx = a.x2 - a.x1, dy = a.y2 - a.y1, rr = Math.hypot(dx, dy);
+        if (rr > 0) el("path", { d: `M${a.x2},${a.y2} A${rr},${rr} 0 0 1 ${a.x1 - dy},${a.y1 + dx}`, class: "swing" }, gBase);
+      }
     }
-    // walls drawn outside the outline (the passage and the landing)
+    // walls not on the outline (all of them when the plan has no outline)
     const onOutline = (w) => DATA.outline.some((p, i) => { const q = DATA.outline[(i + 1) % DATA.outline.length]; const c1 = Math.abs(cross(p, q, w[0])) < 1e-6, c2 = Math.abs(cross(p, q, w[1])) < 1e-6; return c1 && c2; });
     for (const w of DATA.walls) { if (!onOutline(w)) el("line", { x1: w[0][0] * S, y1: w[0][1] * S, x2: w[1][0] * S, y2: w[1][1] * S, class: "wall", style: "stroke-width:4" }, gBase); }
     for (const p of DATA.points) {
@@ -215,7 +226,7 @@ function makeApp(store) {
     }
     for (const l of DATA.ui.labels) {
       if (l.view && k < 1.6) continue;
-      const cls = l.style === "strong" ? "lbl-strong" : l.style === "hold" ? "lbl-hold" : "";
+      const cls = l.style === "strong" ? "lbl-strong" : l.style === "hold" ? "lbl-hold" : l.style === "light" ? "lbl-light" : "";
       const t = el("text", { x: l.x * S, y: l.y * S, class: "lbl-map " + cls, "font-size": Math.max(l.size * k, px(l.size >= 15 ? 12 : 10.5)), "text-anchor": l.anchor || "middle" }, gBase);
       t.textContent = l.text;
     }
@@ -1134,19 +1145,19 @@ function makeApp(store) {
     openitems: { title: "Open items", help: "Questions, each with who can answer it. Confirmed and Dropped ones leave the board.",
       cols: () => [C("question", "Question", "long"), C("who", "For", "text"), C("why", "Why it matters", "long"), C("ondoc", "On the Questions doc?", "text", { cls: "narrow" }), C("status", "Status", "select", { opts: () => ST, cls: "narrow" })] },
     fixtures: { group: "Room", title: "Counters and furniture", help: "Rectangles in plan meters: x, y is the corner nearest the origin; w and h the size. 'Solid' ones count for walking clearance.",
-      cols: () => [C("label", "Name", "text"), C("x", "x", "num"), C("y", "y", "num"), C("w", "w", "num"), C("h", "h", "num"), C("kind", "Kind", "select", { opts: () => ["counter", "tall", "island", "appliance", "cooktop", "sink", "furniture", "rug", "item"], cls: "narrow" }), C("solid", "Solid", "select", { opts: () => YES, cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
+      cols: () => [C("label", "Name", "text"), C("x", "x", "num"), C("y", "y", "num"), C("w", "w", "num"), C("h", "h", "num"), C("kind", "Kind", "select", { opts: () => ["counter", "tall", "island", "bar", "appliance", "oven", "cooktop", "sink", "table", "furniture", "wall", "rug", "item"], cls: "narrow" }), C("solid", "Solid", "select", { opts: () => YES, cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
     walls: { group: "Room", title: "Walls", help: "Wall segments in plan meters. 'Blocks the view' hides what's behind it from the camera; 'Blocks walking' is checked on routes (glass blocks walking but not the view).",
       cols: () => [C("x1", "x1", "num"), C("y1", "y1", "num"), C("x2", "x2", "num"), C("y2", "y2", "num"), C("view", "Blocks the view", "select", { opts: () => YES, cls: "narrow" }), C("walk", "Blocks walking", "select", { opts: () => YES, cls: "narrow" }), C("note", "Note", "long")] },
-    features: { group: "Room", title: "Doors, windows, glass", help: "Drawn over the walls: openings, windows, glass and doors.",
-      cols: () => [C("label", "Name", "text"), C("x1", "x1", "num"), C("y1", "y1", "num"), C("x2", "x2", "num"), C("y2", "y2", "num"), C("kind", "Kind", "select", { opts: () => ["opening", "window", "glass", "door"], cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
+    features: { group: "Room", title: "Doors, windows, glass", help: "Drawn over the walls: openings, windows, glass and doors. A swing is a door's arc: x1, y1 is the hinge, and the arc runs a quarter turn clockwise from x2, y2. A line is just drawn (it doesn't block anything).",
+      cols: () => [C("label", "Name", "text"), C("x1", "x1", "num"), C("y1", "y1", "num"), C("x2", "x2", "num"), C("y2", "y2", "num"), C("kind", "Kind", "select", { opts: () => ["opening", "window", "glass", "door", "swing", "line"], cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
     areas: { group: "Room", title: "Areas", help: "Rooms and outside areas as polygons: 'x, y; x, y; ...' in plan meters.",
-      cols: () => [C("label", "Name", "text"), C("pts", "Outline", "long"), C("kind", "Kind", "select", { opts: () => ["room", "outside"], cls: "narrow" }), C("style", "Drawn as", "select", { opts: () => ["room", "outside", "lawn", "lower", "hall"], cls: "narrow" }), C("level", "Level", "text", { cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
+      cols: () => [C("label", "Name", "text"), C("pts", "Outline", "long"), C("kind", "Kind", "select", { opts: () => ["room", "outside"], cls: "narrow" }), C("style", "Drawn as", "select", { opts: () => ["room", "outside", "lawn", "dining", "patio", "lower", "hall", "hatch", "hatch2"], cls: "narrow" }), C("level", "Level", "text", { cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
     seats: { group: "Room", title: "Stools, chairs, patio tables", help: "Patio tables marked 'moved' are cleared for the take and drawn dashed; the others count for clearance.",
       cols: () => [C("kind", "Kind", "select", { opts: () => ["stool", "chair", "patio table"], cls: "narrow" }), C("x", "x", "num"), C("y", "y", "num"), C("moved", "Moved", "select", { opts: () => YES, cls: "narrow" }), C("r", "Radius", "num")] },
     points: { group: "Room", title: "Outlets, noise, trip hazards", help: "Points on the plan.",
       cols: () => [C("label", "Name", "text"), C("x", "x", "num"), C("y", "y", "num"), C("kind", "Kind", "select", { opts: () => ["power", "noise", "trip"], cls: "narrow" }), C("conf", "Sure?", "select", { opts: () => ["low", "medium", "high"], cls: "narrow" }), C("note", "Note", "long")] },
     labels: { group: "Room", title: "Map labels", help: "Words on the map. 'Only on the whole route' hides a label in the kitchen view.",
-      cols: () => [C("text", "Label", "text"), C("x", "x", "num"), C("y", "y", "num"), C("size", "Size", "num"), C("style", "Style", "select", { opts: () => ["", "strong", "hold"], cls: "narrow" }), C("anchor", "Anchor", "select", { opts: () => ["middle", "start", "end"], cls: "narrow" }), C("view", "Only on the whole route", "select", { opts: () => ["", "Whole route"], cls: "narrow" })] },
+      cols: () => [C("text", "Label", "text"), C("x", "x", "num"), C("y", "y", "num"), C("size", "Size", "num"), C("style", "Style", "select", { opts: () => ["", "strong", "hold", "light"], cls: "narrow" }), C("anchor", "Anchor", "select", { opts: () => ["middle", "start", "end"], cls: "narrow" }), C("view", "Only on the whole route", "select", { opts: () => ["", "Whole route"], cls: "narrow" })] },
     settings: { group: "Setup", title: "Settings", help: "Names, the timer, lenses, views and the model's numbers. Each setting is found by its name, so a new one only does something if the plan reads that name.", fixed: true,
       cols: () => [C("id", "Setting", "ro"), C("value", "Value", "long", { cls: "wide-col" }), C("note", "What it does", "ro")] },
     texts: { group: "Setup", title: "Wording", help: "Wording on the board and in prints. {tokens} are filled in from the plan. Rows whose name starts with inf are the notes on the About tab: Add a row to write a new one.", fixed: true,

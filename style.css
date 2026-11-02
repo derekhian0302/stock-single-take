@@ -30,6 +30,8 @@ img { max-width: 100%; }
   --chip: #ffffff;
   --sel: #f2b705;
   --input: #ffffff;
+  --dining: #efeae3; --patio: #e8eedf; --lawn-s: #8aa78a; --bar: #3d4a5a; --oven: #5b5d60; --fridge: #e2e6ea;
+  --table: #c9b596; --table-s: #5b4636; --sink: #dbe7f3; --sink-s: #3a6ea5; --hatch: #cfd2cc;
   --shadow: 0 1px 0 rgba(20, 24, 28, 0.06), 0 6px 18px rgba(20, 24, 28, 0.06);
   --font-display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
   --font-body: "Barlow", "Segoe UI", system-ui, sans-serif;
@@ -42,6 +44,8 @@ img { max-width: 100%; }
     --wall: #d6dbdf; --glass: #5cb4e0; --talent: #ff7b3b; --camera: #6d99ff; --crew: #a98bfa; --crew2: #2fd1bd; --boom: #8fb0cf;
     --landmark: #f0a43a; --warn: #ff6b6b; --edge: #f2b14c; --ok: #49d483;
     --hot: rgba(255, 107, 107, 0.16); --wedge: rgba(109, 153, 255, 0.16); --swap: rgba(47, 209, 189, 0.22); --chip: #1f2428; --sel: #ffd23f; --input: #11161a;
+    --dining: #26231f; --patio: #1b2419; --lawn-s: #5f7f5f; --bar: #4a5a6e; --oven: #6a6d71; --fridge: #2c3238;
+    --table: #6f604b; --table-s: #b39c7c; --sink: #22303d; --sink-s: #78a7dc; --hatch: #3a4046;
     --shadow: 0 1px 0 rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.35);
     color-scheme: dark;
   }
@@ -52,6 +56,8 @@ img { max-width: 100%; }
   --wall: #d6dbdf; --glass: #5cb4e0; --talent: #ff7b3b; --camera: #6d99ff; --crew: #a98bfa; --crew2: #2fd1bd; --boom: #8fb0cf;
   --landmark: #f0a43a; --warn: #ff6b6b; --edge: #f2b14c; --ok: #49d483;
   --hot: rgba(255, 107, 107, 0.16); --wedge: rgba(109, 153, 255, 0.16); --swap: rgba(47, 209, 189, 0.22); --chip: #1f2428; --sel: #ffd23f; --input: #11161a;
+  --dining: #26231f; --patio: #1b2419; --lawn-s: #5f7f5f; --bar: #4a5a6e; --oven: #6a6d71; --fridge: #2c3238;
+  --table: #6f604b; --table-s: #b39c7c; --sink: #22303d; --sink-s: #78a7dc; --hatch: #3a4046;
   --shadow: 0 1px 0 rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.35);
   color-scheme: dark;
 }
@@ -100,26 +106,39 @@ h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 
 /* svg */
 .a-room { fill: var(--floor); }
 .a-outside { fill: var(--outside); }
-.a-lawn { fill: var(--lawn); }
+.a-lawn { fill: var(--lawn); stroke: var(--lawn-s); stroke-width: 3; stroke-dasharray: 11 7; }
+.a-dining { fill: var(--dining); }
+.a-patio { fill: var(--patio); }
+.a-hatch { fill: url(#pat-hatch); }
+.a-hatch2 { fill: url(#pat-hatch2); }
+.hatch-line { stroke: var(--hatch); stroke-width: 1.6; fill: none; }
 .a-lower { fill: var(--outside); stroke: var(--rule); stroke-dasharray: 8 6; }
 .a-hall { fill: var(--floor); stroke: var(--wall); stroke-width: 2; stroke-dasharray: 10 6; }
-.f-counter { fill: var(--counter); stroke: var(--counter-s); stroke-width: 1.2; }
+.f-counter { fill: var(--floor); stroke: var(--wall); stroke-width: 2; }
 .f-tall { fill: var(--counter); stroke: var(--counter-s); stroke-width: 1.2; opacity: 0.85; }
-.f-island { fill: var(--counter); stroke: var(--counter-s); stroke-width: 1.6; }
-.f-appliance { fill: var(--panel); stroke: var(--counter-s); stroke-width: 1.2; }
+.f-island { fill: var(--floor); stroke: var(--wall); stroke-width: 2; }
+.f-bar { fill: var(--bar); stroke: var(--wall); stroke-width: 1.5; }
+.f-oven { fill: var(--oven); stroke: var(--wall); stroke-width: 1.5; }
+.f-table { fill: var(--table); stroke: var(--table-s); stroke-width: 2; }
+.f-chair { fill: var(--floor); stroke: var(--table-s); stroke-width: 2.2; }
+.f-wall { fill: var(--wall); stroke: none; }
+.f-appliance { fill: var(--fridge); stroke: var(--wall); stroke-width: 2; }
 .f-cooktop { fill: #2b3035; stroke: #2b3035; }
-.f-sink { fill: var(--floor); stroke: var(--counter-s); stroke-width: 1.2; }
-.f-furniture { fill: var(--counter); stroke: var(--counter-s); stroke-width: 1; opacity: 0.7; }
+.f-sink { fill: var(--sink); stroke: var(--sink-s); stroke-width: 2; }
+.f-furniture { fill: var(--counter); stroke: var(--wall); stroke-width: 2; }
 .f-rug { fill: none; stroke: var(--crew); stroke-width: 1; stroke-dasharray: 5 4; opacity: 0.6; }
 .f-item { fill: var(--counter); stroke: var(--landmark); stroke-width: 1; }
 .wall { fill: none; stroke: var(--wall); stroke-width: 6; stroke-linejoin: miter; }
 .glass { stroke: var(--glass); stroke-width: 4; }
 .glass-gap { stroke: var(--floor); stroke-width: 8; }
 .door { stroke: var(--glass); stroke-width: 3; stroke-dasharray: 8 4; }
+.swing { fill: none; stroke: var(--muted); stroke-width: 2.4; stroke-dasharray: 7 5; }
+.edge-line { stroke: var(--wall); stroke-width: 3; }
 .hot { fill: var(--hot); }
 .lbl-map { font-family: var(--font-display); font-weight: 600; fill: var(--muted); letter-spacing: 0.02em; }
 .lbl-strong { fill: var(--ink); }
 .lbl-hold { fill: var(--crew); }
+.lbl-light { fill: #ffffff; paint-order: stroke; stroke: rgba(20, 24, 28, 0.7); stroke-width: 3px; stroke-linejoin: round; }
 .mk circle { fill: var(--floor); stroke-width: 3; }
 .mk text { font-family: var(--font-display); font-weight: 700; text-anchor: middle; dominant-baseline: central; }
 .mk.route circle, .mk.station circle { stroke: var(--talent); } .mk.route text, .mk.station text { fill: var(--talent); }

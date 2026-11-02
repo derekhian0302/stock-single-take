@@ -1025,7 +1025,7 @@
         for (const r of rows) {
           if (r.route.length < 2) continue;
           let at = labelAt(r.route, placed);
-          const anchor = kind === "partial" && at[0] > 3.0 ? "end" : "start";
+          const anchor = kind === "partial" && at[0] > sNum("resetLabelFlip", 3.0) ? "end" : "start";
           if (anchor === "end") at = [at[0] - 0.5, at[1]];
           items.push({ pts: r.route.map(([x, y]) => [pyRound(x, 3), pyRound(y, 3)]), style: routeStyle(r), label: r.label || `${r.step}: ${r.who}`,
             at: [pyRound(at[0], 3), pyRound(at[1], 3)], anchor, id: r.id });
@@ -1039,13 +1039,27 @@
       };
       return out;
     }
+    // the hot zone: from the island's edge that faces the hot marks to the far side of the counter behind them,
+    // over the stretch the marks cover (the island can be on either side of the counter)
     function hotRect() {
       const isl = FIXTURES.find((f) => f.id === txt(set.hotFixture));
-      let ys = parseList(set.hotMarks).filter((c) => MARK_XY[c]).map((c) => MARK_XY[c][1]);
-      if (!isl || !ys.length) return [0, 0, 0, 0];
-      const x1 = isl.x;
+      const pts = parseList(set.hotMarks).filter((c) => MARK_XY[c]).map((c) => MARK_XY[c]);
+      if (!isl || !pts.length) return [0, 0, 0, 0];
+      const ys = pts.map((p) => p[1]);
       const y0 = Math.min(...ys) - 0.3, y1 = Math.max(...ys) + 0.4;
-      return [0.0, pyRound(y0, 2), pyRound(x1, 2), pyRound(y1 - y0, 2)];
+      const mx = pts.reduce((sum, p) => sum + p[0], 0) / pts.length;
+      const counters = FIXTURES.filter((f) => f !== isl && (f.kind === "counter" || f.kind === "cooktop") && f.y < y1 && f.y + f.h > y0);
+      let x0, x1;
+      if (mx < isl.x + isl.w / 2) {
+        x1 = isl.x;
+        const near = counters.filter((f) => f.x + f.w <= isl.x + 1e-9);
+        x0 = near.length ? Math.min(...near.map((f) => f.x)) : 0;
+      } else {
+        x0 = isl.x + isl.w;
+        const near = counters.filter((f) => f.x >= x0 - 1e-9);
+        x1 = near.length ? Math.max(...near.map((f) => f.x + f.w)) : x0 + 1.5;
+      }
+      return [pyRound(x0, 2), pyRound(y0, 2), pyRound(x1 - x0, 2), pyRound(y1 - y0, 2)];
     }
 
     function fitBox() {
